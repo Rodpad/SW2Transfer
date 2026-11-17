@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SW2Transfer</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+/* The SW2Transfer app's palette (source/main.cpp), always dark like the app. */
+:root {
+  color-scheme: dark;
+  --bg: #111317; --panel: #1a1d23; --text: #e8eaee; --muted: #9aa1ad; --line: #2a2e36;
+  --accent: #ff3b4f; --accent-ink: #ffffff; --bar-bg: #2a2e36; --hover: #22262d;
+  --up: #4fa3ff; --down: #5bd17a; --ok: #5bd17a; --err: #ff3b4f;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 18px; margin: 0 12px 0 0; letter-spacing: .2px; display: flex; align-items: center; gap: 10px; }
+header h1 img { width: 32px; height: 32px; border-radius: 6px; display: block; }
+header h1 .t span { color: var(--accent); }
+.meta { color: var(--muted); font-size: 13px; }
+.spacer { flex: 1; }
+label.opt { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+select, button, input[type=text] { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+button { cursor: pointer; }
+button:hover { background: var(--hover); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.primary:hover { filter: brightness(1.08); }
+button.danger { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, var(--line)); }
+button.danger:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.crumbs { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; font-weight: 600; min-width: 0; }
+.crumbs a { color: var(--text); text-decoration: none; padding: 2px 6px; border-radius: 6px; }
+.crumbs a:hover { background: var(--hover); }
+.crumbs .sep { color: var(--muted); }
+table { width: 100%; border-collapse: collapse; }
+td { padding: 8px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+tr.row:hover { background: var(--hover); }
+td.name { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+td.num { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; padding: 8px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; user-select: none; }
+th.sortable { cursor: pointer; }
+th.sortable:hover { color: var(--text); }
+th.c-size, th.c-created, th.c-modified { text-align: right; }
+th .arrow { display: inline-block; width: 1.2em; text-align: center; font-size: 10px; opacity: 0; }
+th.sortable:hover .arrow { opacity: .4; }
+th.sorted { color: var(--text); }
+th.sorted .arrow { opacity: 1; color: var(--accent); }
+td.act button { padding: 3px 8px; font-size: 13px; }
+td.sel { width: 1%; padding-right: 0; }
+input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+tr.row.picked { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.selbar { background: var(--bg); }
+.selbar button:disabled { opacity: .45; cursor: default; }
+.picklist { border: 1px solid var(--line); border-radius: 10px; max-height: 50vh; overflow-y: auto; margin: 10px 0; }
+.picklist div { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.picklist div:last-child { border-bottom: 0; }
+.picklist div:hover { background: var(--hover); }
+.picklist div.off { color: var(--muted); cursor: default; background: none; }
+.pickfoot { display: flex; gap: 8px; align-items: center; }
+.icon { display: inline-block; width: 22px; color: var(--muted); }
+.drop { border: 2px dashed var(--line); border-radius: 12px; padding: 18px; text-align: center; color: var(--muted); }
+.drop.over { border-color: var(--accent); color: var(--text); }
+.xfer { padding: 10px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.xfer:last-child { border-bottom: 0; }
+.xhead { display: flex; gap: 10px; font-size: 14px; }
+.xhead .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xhead .s { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.prog { height: 6px; background: var(--bar-bg); border-radius: 3px; overflow: hidden; }
+.prog > div { height: 100%; width: 0; background: var(--up); transition: width .2s; }
+/* Like the app: blue uploads (and copies), green downloads, red when cancelled or failed. */
+.xhead .k { font-weight: 600; margin-right: 6px; }
+.xfer.up .k, .xfer.copy .k, .xfer.up .s, .xfer.copy .s { color: var(--up); }
+.xfer.down .k, .xfer.down .s { color: var(--down); }
+.xfer.up .prog > div, .xfer.copy .prog > div { background: var(--up); }
+.xfer.down .prog > div { background: var(--down); }
+.xfer.done .s { color: var(--muted); }
+.xfer.done .n { color: var(--muted); }
+.xfer.failed .k, .xfer.failed .s { color: var(--err); }
+.xfer.failed .prog > div { background: var(--err); }
+.empty { padding: 16px; color: var(--muted); }
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+dialog::backdrop { background: rgba(0, 0, 0, .5); }
+.help { padding: 20px 24px; overflow-y: auto; }
+.help h3 { margin: 18px 0 6px; font-size: 15px; }
+.help h3:first-of-type { margin-top: 4px; }
+.help p, .help li { color: var(--muted); margin: 4px 0; }
+.help ol, .help ul { padding-left: 22px; margin: 4px 0; }
+.help pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-size: 13px; margin: 6px 0; }
+.help code { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.help .top { display: flex; align-items: center; gap: 12px; }
+.help .top h2 { font-size: 18px; flex: 1; }
+h2 { font-size: 14px; margin: 0; }
+@media (max-width: 900px) { .c-created { display: none; } }
+@media (max-width: 640px) { header { padding: 12px 16px; } main { padding: 12px 16px; } .c-size, .c-modified { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1><img src="/favicon.png" alt=""><span class="t">SW2<span>Transfer</span></span></h1>
+  <span class="meta" id="free"></span>
+  <span class="spacer"></span>
+  <label class="opt">Connections
+    <select id="conns"><option>1</option><option>2</option><option>4</option><option value="8" selected>8 (default)</option><option>12</option><option>16</option></select></label>
+  <label class="opt">Chunk
+    <select id="chunk"><option value="1">1 MB</option><option value="2" selected>2 MB (default)</option><option value="4">4 MB</option><option value="8">8 MB</option><option value="16">16 MB</option></select></label>
+</header>
+<main>
+  <section class="card">
+    <div class="bar">
+      <div class="crumbs" id="crumbs"></div>
+      <span class="spacer"></span>
+      <button id="help">Help</button>
+      <button id="mkdir">New folder</button>
+      <button id="upFolder">Upload folder</button>
+      <button class="primary" id="upFiles">Upload files</button>
+      <input type="file" id="fileIn" multiple hidden>
+      <input type="file" id="dirIn" webkitdirectory multiple hidden>
+    </div>
+    <div class="bar selbar">
+      <input type="checkbox" id="selAll" title="Select everything in this folder">
+      <span class="meta" id="selCount">Tick items to download, copy, move or delete several at once</span>
+      <span class="spacer"></span>
+      <button id="selDownload" disabled>Download</button>
+      <button id="selCopy" disabled>Copy to&hellip;</button>
+      <button id="selMove" disabled>Move to&hellip;</button>
+      <button id="selDelete" disabled>Delete</button>
+    </div>
+    <table><thead><tr id="head"></tr></thead><tbody id="list"></tbody></table>
+  </section>
+  <div class="drop" id="drop">Drop files or folders here to upload them into the current folder</div>
+  <section class="card">
+    <div class="bar"><h2>Transfers</h2><span class="spacer"></span><span class="meta" id="total"></span><button id="cancelAll" class="danger">Cancel all</button><button id="clear">Clear finished</button></div>
+    <div id="xfers"><div class="empty">Nothing yet. Each file is split into chunks that several connections move at once.</div></div>
+  </section>
+</main>
+<dialog id="pickDlg"><div class="help">
+  <div class="top"><h2 id="pickTitle"></h2></div>
+  <div class="crumbs" id="pickCrumbs"></div>
+  <div class="picklist" id="pickList"></div>
+  <div class="pickfoot"><button id="pickNew">New folder</button><span class="spacer"></span><button id="pickCancel">Cancel</button><button class="primary" id="pickOk"></button></div>
+</div></dialog>
+<dialog id="helpDlg"><div class="help">
+  <div class="top"><h2>Help</h2><button id="helpClose">Close</button></div>
+  <h3>Uploading</h3>
+  <ol>
+    <li>Click folders to open them; the path at the top jumps back up. Uploads go into the folder you are in.</li>
+    <li><b>Upload files</b> picks one or more files. <b>Upload folder</b> picks a whole folder, subfolders included.</li>
+    <li>You can also drag files and folders (several at once) anywhere onto the page.</li>
+    <li>Files upload one after another, each split into chunks that several connections send at once.</li>
+  </ol>
+  <h3>Downloading and managing files</h3>
+  <ul>
+    <li>Click a file to download it. The chunks are put together in the browser, then saved to your Downloads.</li>
+    <li>Files over 3.5 GB download over a single connection.</li>
+    <li>Each row has <b>Rename</b> and <b>Delete</b> (deleting a folder removes everything in it). <b>New folder</b> makes a folder here.</li>
+    <li>Tick the boxes to work on several items: <b>Download</b> saves the ticked files, <b>Copy to&hellip;</b> and <b>Move to&hellip;</b> let you click through folders to pick the destination, <b>Delete</b> removes them. The box in the bar ticks everything in the folder.</li>
+    <li><b>Cancel all</b> (under Transfers) stops every transfer and copy, from any device. Unfinished uploads and copies are deleted from the Switch. On the Switch, press X twice; in a terminal, <code>sw2xfer.py cancel</code>.</li>
+    <li>Copies run on the Switch and show their progress under Transfers. A copy into the same folder is named &ldquo;name copy&rdquo;. Moves are instant and never replace an existing item.</li>
+    <li>To download a whole folder to your computer, use the command-line client below.</li>
+  </ul>
+  <h3>Speed settings</h3>
+  <p><b>Connections</b> is how many connections share each file; <b>Chunk</b> is the piece each one moves at a time. 8 connections with 2 MB chunks were fastest in tests over Wi-Fi; more than 8 tends to slow downloads.</p>
+  <h3>Command-line client (Mac, Windows, Linux)</h3>
+  <p>Needs Python 3. <a href="/sw2xfer.py" download>Download sw2xfer.py</a>, then run it from the folder you saved it in. The last path is always the destination.</p>
+  <pre><code id="helpCmds"></code></pre>
+  <p>Options: <code>-n 8</code> connections, <code>--chunk 2M</code> chunk size, <code>bench /path/test.bin</code> measures upload and download speed (the test file is deleted afterwards).</p>
+</div></dialog>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let cwd = "/";
+try { cwd = localStorage.getItem("sw2t.cwd") || "/"; } catch (e) {}
+try { const c = localStorage.getItem("sw2t.conns"); if (c) $("conns").value = c; const k = localStorage.getItem("sw2t.chunk"); if (k && [...$("chunk").options].some((o) => o.value === k)) $("chunk").value = k; } catch (e) {}
+$("conns").onchange = () => { try { localStorage.setItem("sw2t.conns", $("conns").value); } catch (e) {} };
+$("chunk").onchange = () => { try { localStorage.setItem("sw2t.chunk", $("chunk").value); } catch (e) {} };
+
+const enc = (p) => p.split("/").map(encodeURIComponent).join("/");
+const join = (a, b) => (a.endsWith("/") ? a : a + "/") + b;
+function human(n) {
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB", "TB"]; let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n < 10 ? 2 : 1) + " " + u[i];
+}
+async function api(method, ep, params) {
+  const r = await fetch(ep + "?" + new URLSearchParams(params), { method });
+  const j = await r.json().catch(() => ({ ok: false, error: "HTTP " + r.status }));
+  if (!r.ok || j.ok === false) throw new Error(j.error || "HTTP " + r.status);
+  return j;
+}
+
+// ---------------------------------------------------------------- browsing
+// Listing: fetched once per folder, sorted and drawn by render().
+let listing = [], sortKey = "name", sortDir = 1;
+try { const so = JSON.parse(localStorage.getItem("sw2t.sort") || "null"); if (so && ["name", "size", "created", "modified"].includes(so.k)) { sortKey = so.k; sortDir = so.d === -1 ? -1 : 1; } } catch (e) {}
+const COLS = [["name", "Name"], ["size", "Size"], ["created", "Created"], ["modified", "Modified"]];
+function fmtTime(t) {
+  if (!t) return "";
+  const d = new Date(t * 1000), now = new Date();
+  const opts = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return d.toLocaleString(undefined, opts);
+}
+function setSort(k) {
+  if (sortKey === k) sortDir = -sortDir;
+  else { sortKey = k; sortDir = k === "name" ? 1 : -1; }  // newest / biggest first
+  try { localStorage.setItem("sw2t.sort", JSON.stringify({ k: sortKey, d: sortDir })); } catch (e) {}
+  render();
+}
+function header() {
+  const h = $("head"); h.innerHTML = "";
+  h.append(Object.assign(document.createElement("th"), { className: "sel" }));
+  for (const [k, label] of COLS) {
+    const th = document.createElement("th");
+    th.className = "sortable c-" + k + (k === sortKey ? " sorted" : "");
+    th.title = "Sort by " + label.toLowerCase();
+    const arrow = `<span class="arrow">${k === sortKey ? (sortDir > 0 ? "&#9650;" : "&#9660;") : "&#9650;"}</span>`;
+    // Right-aligned columns carry the arrow on the left so the titles line up with the values.
+    th.innerHTML = k === "name" ? `<span class="t"></span>${arrow}` : `${arrow}<span class="t"></span>`;
+    th.querySelector(".t").textContent = label;
+    th.onclick = () => setSort(k);
+    h.append(th);
+  }
+  h.append(Object.assign(document.createElement("th"), { className: "act" }));
+}
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+function sorted(ents) {
+  return [...ents].sort((a, b) => {
+    if (a.dir !== b.dir) return b.dir - a.dir;  // folders stay on top
+    const r = sortKey === "name" ? byName(a, b) : ((a[sortKey] || 0) - (b[sortKey] || 0)) || byName(a, b);
+    return r * sortDir;
+  });
+}
+async function refresh() {
+  try {
+    const j = await api("GET", "/api/list", { path: cwd });
+    cwd = j.path;
+    try { localStorage.setItem("sw2t.cwd", cwd); } catch (e) {}
+    listing = j.entries;
+    render();
+  } catch (err) {
+    if (cwd !== "/") { cwd = "/"; return refresh(); }
+    header();
+    $("list").innerHTML = `<tr><td class="empty" colspan="6">Cannot list: ${err.message}</td></tr>`;
+  }
+  crumbs();
+  api("GET", "/api/info", {}).then((j) => { $("free").textContent = j.free >= 0 ? human(j.free) + " free on SD" : ""; }).catch(() => {});
+}
+function render() {
+  const list = $("list");
+  header();
+  const ents = sorted(listing);
+  list.innerHTML = "";
+  shown = ents.map((e) => ({ path: join(cwd, e.name), name: e.name, dir: e.dir, size: e.size }));
+  for (const p of [...selected.keys()]) if (!shown.some((e) => e.path === p)) selected.delete(p);
+  if (cwd !== "/") ents.unshift({ name: "..", dir: true, up: true });
+  for (const e of ents) {
+    const tr = document.createElement("tr"); tr.className = "row";
+    const td = (cls, text) => { const c = document.createElement("td"); c.className = cls; if (text !== undefined) c.textContent = text; return c; };
+    const sel = td("sel"), name = td("name");
+    name.innerHTML = `<span class="icon">${e.dir ? "&#128193;" : "&#128196;"}</span>`;
+    name.append(e.up ? ".. (up)" : e.name);
+    name.title = e.up ? "Up one folder" : e.name;
+    const p = e.up ? cwd.replace(/\/[^/]*$/, "") || "/" : join(cwd, e.name);
+    name.onclick = () => e.dir ? go(p) : download(p, e.size);
+    const size = td("num c-size", e.dir ? "" : human(e.size));
+    const created = td("num c-created", e.up ? "" : fmtTime(e.created));
+    const modified = td("num c-modified", e.up ? "" : fmtTime(e.modified));
+    if (!e.up) {
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = selected.has(p);
+      cb.setAttribute("aria-label", "Select " + e.name);
+      tr.classList.toggle("picked", cb.checked);
+      cb.onchange = () => { if (cb.checked) selected.set(p, { path: p, name: e.name, dir: e.dir, size: e.size }); else selected.delete(p); tr.classList.toggle("picked", cb.checked); selUpdate(); };
+      sel.append(cb);
+    }
+    const act = td("act");
+    if (!e.up) {
+      const ren = document.createElement("button"); ren.textContent = "Rename";
+      ren.onclick = async () => { const to = prompt("New name", e.name); if (!to || to === e.name) return; await guard(() => api("POST", "/api/rename", { from: p, to: join(cwd, to) })); refresh(); };
+      const del = document.createElement("button"); del.textContent = "Delete";
+      del.onclick = async () => { if (!confirm(`Delete ${e.name}${e.dir ? " and everything in it" : ""}?`)) return; await guard(() => api("POST", "/api/delete", { path: p, recursive: e.dir ? "1" : "0" })); refresh(); };
+      act.append(ren, " ", del);
+    }
+    tr.append(sel, name, size, created, modified, act); list.append(tr);
+  }
+  if (!listing.length) list.insertAdjacentHTML("beforeend", `<tr><td></td><td class="empty" colspan="5">Empty folder</td></tr>`);
+  selUpdate();
+}
+async function guard(fn) { try { return await fn(); } catch (e) { alert(e.message); } }
+function go(p) { if (p !== cwd) selected.clear(); cwd = p; refresh(); }
+function crumbs() {
+  const c = $("crumbs"); c.innerHTML = "";
+  const parts = cwd.split("/").filter(Boolean);
+  const mk = (label, path) => { const a = document.createElement("a"); a.href = "#"; a.textContent = label; a.onclick = (ev) => { ev.preventDefault(); go(path); }; return a; };
+  c.append(mk("SD", "/"));
+  let acc = "";
+  for (const p of parts) { acc += "/" + p; const s = document.createElement("span"); s.className = "sep"; s.textContent = "/"; c.append(s, mk(p, acc)); }
+}
+$("mkdir").onclick = async () => { const n = prompt("Folder name"); if (!n) return; await guard(() => api("POST", "/api/mkdir", { path: join(cwd, n) })); refresh(); };
+
+// ---------------------------------------------------------------- transfers
+const xfers = [];
+function addXfer(name, size, up) {  // up: true upload, false download, "copy"
+  const el = document.createElement("div"); el.className = "xfer";
+  el.innerHTML = `<div class="xhead"><span class="n"><span class="k"></span><span class="p"></span></span><span class="s"></span></div><div class="prog"><div></div></div>`;
+  el.classList.add(up === "copy" ? "copy" : up ? "up" : "down");
+  el.querySelector(".k").textContent = up === "copy" ? "Copy to" : up ? "Upload" : "Download";
+  el.querySelector(".p").textContent = name;
+  const box = $("xfers"); if (!xfers.length) box.innerHTML = ""; box.prepend(el);
+  const x = { el, size, done: 0, t0: performance.now(), state: "run", up };
+  xfers.push(x); return x;
+}
+function paint() {
+  let speed = 0;
+  for (const x of xfers) {
+    const el = x.el, s = el.querySelector(".s");
+    const sec = Math.max((x.t1 || performance.now()) - x.t0, 1) / 1000;
+    const mbs = x.done / sec / 1048576;
+    el.querySelector(".prog > div").style.width = (x.size ? 100 * x.done / x.size : 100) + "%";
+    if (x.state === "queued") { s.textContent = "waiting"; continue; }
+    if (x.state === "run") { if (x.up !== "copy") speed += mbs; s.textContent = `${human(x.done)} / ${human(x.size)} · ${mbs.toFixed(1)} MB/s`; }
+    else if (x.state === "done") { el.classList.add("done"); s.textContent = `${human(x.size)} in ${sec.toFixed(1)} s · ${mbs.toFixed(1)} MB/s`; }
+    else { el.classList.add("failed"); s.textContent = x.error || "Failed"; }
+  }
+  $("total").textContent = speed ? speed.toFixed(1) + " MB/s" : "";
+}
+setInterval(paint, 250);
+$("clear").onclick = () => { for (let i = xfers.length - 1; i >= 0; i--) if (xfers[i].state !== "run") { xfers[i].el.remove(); xfers.splice(i, 1); } if (!xfers.length) $("xfers").innerHTML = `<div class="empty">Nothing yet.</div>`; };
+
+// Cancel all: every request of a transfer carries its id (?x=); after a
+// cancel the Switch refuses those ids (410), here or on any other device.
+let abortCtl = new AbortController();
+const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+class Cancelled extends Error { constructor() { super("Cancelled"); this.cancelled = true; } }
+const isCancel = (e) => e && (e.cancelled || e.name === "AbortError");
+function check(r) {
+  if (r.status === 410) throw new Cancelled();
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r;
+}
+function failXfer(x, e) {
+  x.t1 = performance.now();
+  if (isCancel(e)) { x.state = "cancelled"; x.error = "Cancelled"; }
+  else { x.state = "failed"; x.error = "Failed: " + e.message; }
+}
+
+// Runs task(i) for every chunk index with n workers; each chunk retries,
+// except after a cancel.
+async function parallel(count, n, task) {
+  let next = 0, failed = null;
+  const worker = async () => {
+    while (!failed && next < count) {
+      const i = next++;
+      for (let attempt = 0; ; attempt++) {
+        try { await task(i); break; }
+        catch (e) {
+          if (failed) return;
+          if (isCancel(e) || attempt >= 3) { failed = e; return; }
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(n, Math.max(count, 1)) }, worker));
+  if (failed) throw failed;
+}
+const settings = () => ({ n: +$("conns").value, chunk: +$("chunk").value * 1048576 });
+
+// Upload queue: files go one after another, each with all connections.
+const upQueue = []; let upBusy = false;
+function queueUpload(file, remote) { upQueue.push({ file, remote, x: addXfer(remote, file.size, true) }); pumpUploads(); }
+async function pumpUploads() {
+  if (upBusy) return; upBusy = true;
+  while (upQueue.length) {
+    const { file, remote, x } = upQueue.shift();
+    x.t0 = performance.now();
+    const id = newId(), signal = abortCtl.signal;
+    try {
+      const { n, chunk } = settings();
+      check(await fetch("/api/create?" + new URLSearchParams({ path: remote, size: file.size, x: id }), { method: "POST", signal }));
+      const count = Math.ceil(file.size / chunk);
+      await parallel(count, n, async (i) => {
+        if (signal.aborted) throw new Cancelled();
+        const off = i * chunk, part = file.slice(off, Math.min(off + chunk, file.size));
+        check(await fetch(`/ul${enc(remote)}?offset=${off}&total=${file.size}&x=${id}`, { method: "PUT", body: part, signal }));
+        x.done += part.size;
+      });
+      x.state = "done"; x.t1 = performance.now();
+    } catch (e) { failXfer(x, e); }
+    refresh();
+  }
+  upBusy = false;
+}
+
+async function download(path, size) {
+  const name = path.split("/").pop();
+  // Chunks are held in memory until the file is complete; very large files
+  // use a plain single-connection link instead.
+  if (size > 3.5 * 1073741824) { location.href = `/dl${enc(path)}?dl=1`; return; }
+  const x = addXfer(path, size, false);
+  const id = newId(), signal = abortCtl.signal;
+  try {
+    const { n, chunk } = settings();
+    const parts = new Array(Math.ceil(size / chunk));
+    await parallel(parts.length, n, async (i) => {
+      if (signal.aborted) throw new Cancelled();
+      const a = i * chunk, b = Math.min(a + chunk, size) - 1;
+      const r = check(await fetch(`/dl${enc(path)}?x=${id}`, { headers: { Range: `bytes=${a}-${b}` }, signal }));
+      const blob = await r.blob();
+      if (blob.size !== b - a + 1) throw new Error("short chunk");
+      parts[i] = blob; x.done += blob.size;
+    });
+    x.state = "done"; x.t1 = performance.now();
+    const url = URL.createObjectURL(new Blob(parts, { type: "application/octet-stream" }));
+    const a = document.createElement("a"); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { failXfer(x, e); }
+}
+
+async function cancelEverything() {
+  if (!confirm("Cancel all transfers and copies?\n\nThis stops them on every device. Unfinished uploads and copies are deleted from the Switch.")) return;
+  try { await api("POST", "/api/cancel", {}); } catch (e) {}
+  abortCtl.abort(); abortCtl = new AbortController();
+  for (const q of upQueue.splice(0)) { q.x.state = "cancelled"; q.x.error = "Cancelled"; q.x.t1 = performance.now(); }
+  setTimeout(refresh, 1500);  // the Switch removes unfinished uploads
+}
+$("cancelAll").onclick = cancelEverything;
+
+// ---------------------------------------------------------------- picking files
+$("upFiles").onclick = () => $("fileIn").click();
+$("upFolder").onclick = () => $("dirIn").click();
+$("fileIn").onchange = (e) => { for (const f of e.target.files) queueUpload(f, join(cwd, f.name)); e.target.value = ""; };
+$("dirIn").onchange = (e) => { for (const f of e.target.files) if (!skip(f.name)) queueUpload(f, join(cwd, f.webkitRelativePath || f.name)); e.target.value = ""; };
+const skip = (n) => n === ".DS_Store" || n.startsWith("._");
+const drop = $("drop");
+for (const t of [document.body]) {
+  t.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  t.addEventListener("dragleave", (e) => { if (e.target === drop || !e.relatedTarget) drop.classList.remove("over"); });
+  t.addEventListener("drop", async (e) => {
+    e.preventDefault(); drop.classList.remove("over");
+    const base = cwd;
+    const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    if (!entries.length) { for (const f of e.dataTransfer.files) queueUpload(f, join(base, f.name)); return; }
+    const walk = async (entry, dir) => {
+      if (entry.isFile) {
+        if (skip(entry.name)) return;
+        const f = await new Promise((res, rej) => entry.file(res, rej));
+        queueUpload(f, join(dir, entry.name));
+      } else if (entry.isDirectory) {
+        const sub = join(dir, entry.name);
+        await api("POST", "/api/mkdir", { path: sub }).catch(() => {});
+        const reader = entry.createReader();
+        for (;;) {
+          const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+          if (!batch.length) break;
+          for (const c of batch) await walk(c, sub);
+        }
+      }
+    };
+    for (const en of entries) await walk(en, base);
+  });
+}
+// ---------------------------------------------------------------- selection
+let shown = [];
+const selected = new Map();  // path -> entry
+function selUpdate() {
+  const n = selected.size, files = [...selected.values()].filter((e) => !e.dir).length;
+  $("selCount").textContent = n ? `${n} selected` : "Tick items to download, copy, move or delete several at once";
+  for (const id of ["selCopy", "selMove", "selDelete"]) $(id).disabled = !n;
+  $("selDownload").disabled = !files;
+  $("selDownload").title = files ? "Downloads the selected files (not folders)" : "Select files to download";
+  $("selAll").checked = shown.length > 0 && shown.every((e) => selected.has(e.path));
+  $("selAll").indeterminate = n > 0 && !$("selAll").checked;
+}
+$("selAll").onchange = () => {
+  if ($("selAll").checked) for (const e of shown) selected.set(e.path, e); else selected.clear();
+  render();
+};
+$("selDownload").onclick = async () => {
+  const files = [...selected.values()].filter((e) => !e.dir);
+  for (const f of files) await download(f.path, f.size);
+};
+$("selDelete").onclick = async () => {
+  const items = [...selected.values()];
+  const dirs = items.filter((e) => e.dir).length;
+  if (!confirm(`Delete ${items.length} item${items.length > 1 ? "s" : ""}${dirs ? " (folders with everything in them)" : ""}?`)) return;
+  const errs = [];
+  for (const e of items) await api("POST", "/api/delete", { path: e.path, recursive: e.dir ? "1" : "0" }).catch((x) => errs.push(`${e.name}: ${x.message}`));
+  selected.clear(); refresh();
+  if (errs.length) alert(errs.join("\n"));
+};
+$("selMove").onclick = () => pickFolder("move");
+$("selCopy").onclick = () => pickFolder("copy");
+
+// Folder picker: click through folders, then Move here / Copy here.
+let pick = { mode: "move", dir: "/" };
+async function pickFolder(mode) {
+  pick = { mode, dir: cwd };
+  const n = selected.size;
+  $("pickTitle").textContent = `${mode === "move" ? "Move" : "Copy"} ${n} item${n > 1 ? "s" : ""} to\u2026`;
+  $("pickOk").textContent = mode === "move" ? "Move here" : "Copy here";
+  await pickShow();
+  $("pickDlg").showModal();
+}
+// A folder being moved or copied cannot be a destination (nor anything inside it).
+const blocked = (p) => [...selected.values()].some((e) => e.dir && (p === e.path || p.startsWith(e.path + "/")));
+async function pickShow() {
+  const list = $("pickList");
+  let ents = [];
+  try { ents = (await api("GET", "/api/list", { path: pick.dir })).entries.filter((e) => e.dir); }
+  catch (e) { list.innerHTML = `<div class="off">Cannot list: ${e.message}</div>`; return; }
+  ents.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  list.innerHTML = "";
+  if (pick.dir !== "/") ents.unshift({ name: "..", up: true });
+  for (const e of ents) {
+    const p = e.up ? pick.dir.replace(/\/[^/]*$/, "") || "/" : join(pick.dir, e.name);
+    const d = document.createElement("div");
+    d.innerHTML = `<span class="icon">&#128193;</span>`; d.append(e.up ? ".. (up)" : e.name);
+    if (!e.up && blocked(p)) { d.className = "off"; d.title = "Selected folders cannot go inside themselves"; }
+    else d.onclick = () => { pick.dir = p; pickShow(); };
+    list.append(d);
+  }
+  if (!ents.length) list.innerHTML = `<div class="off">No folders here</div>`;
+  const c = $("pickCrumbs"); c.innerHTML = "";
+  const mk = (label, path) => { const a = document.createElement("a"); a.href = "#"; a.textContent = label; a.onclick = (ev) => { ev.preventDefault(); pick.dir = path; pickShow(); }; return a; };
+  c.append(mk("SD", "/"));
+  let acc = "";
+  for (const part of pick.dir.split("/").filter(Boolean)) { acc += "/" + part; const s = document.createElement("span"); s.className = "sep"; s.textContent = "/"; c.append(s, mk(part, acc)); }
+  const bad = blocked(pick.dir);
+  $("pickOk").disabled = bad;
+  $("pickOk").title = bad ? "Selected folders cannot go inside themselves" : "";
+}
+$("pickCancel").onclick = () => $("pickDlg").close();
+$("pickNew").onclick = async () => {
+  const n = prompt("New folder name"); if (!n) return;
+  await guard(() => api("POST", "/api/mkdir", { path: join(pick.dir, n) }));
+  pick.dir = join(pick.dir, n); pickShow();
+};
+// "name.ext" -> "name copy.ext", "name copy 2.ext", ... for copies into the same folder
+async function freeName(dir, name) {
+  const taken = new Set((await api("GET", "/api/list", { path: dir })).entries.map((e) => e.name));
+  if (!taken.has(name)) return name;
+  const dot = name.lastIndexOf("."), base = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : "";
+  for (let i = 1; ; i++) { const c = `${base} copy${i > 1 ? " " + i : ""}${ext}`; if (!taken.has(c)) return c; }
+}
+$("pickOk").onclick = async () => {
+  const dest = pick.dir, items = [...selected.values()], errs = [];
+  $("pickDlg").close();
+  if (pick.mode === "move") {
+    for (const e of items) {
+      if (e.path.replace(/\/[^/]*$/, "") === dest || (dest === "/" && !e.path.slice(1).includes("/"))) { errs.push(`${e.name}: already in this folder`); continue; }
+      await api("POST", "/api/rename", { from: e.path, to: join(dest, e.name) }).catch((x) => errs.push(`${e.name}: ${x.message}`));
+    }
+  } else {
+    for (const e of items) {
+      try {
+        const name = await freeName(dest, e.name), to = join(dest, name);
+        const j = await api("POST", "/api/copy", { from: e.path, to });
+        const x = addXfer(to, 0, "copy"); x.state = "queued"; x.job = j.job;
+        copies.push(x);
+      } catch (x) { errs.push(`${e.name}: ${x.message}`); }
+    }
+    pollCopies();
+  }
+  selected.clear(); refresh();
+  if (errs.length) alert(errs.join("\n"));
+};
+// Copies run on the Switch; follow their progress.
+const copies = [];
+let polling = false;
+async function pollCopies() {
+  if (polling) return; polling = true;
+  while (copies.some((x) => x.state === "run" || x.state === "queued")) {
+    try {
+      const jobs = (await api("GET", "/api/jobs", {})).jobs;
+      for (const x of copies) {
+        const j = jobs.find((j) => j.id === x.job);
+        if (!j || (x.state !== "run" && x.state !== "queued")) continue;
+        if (j.state === "running" && x.state === "queued") { x.state = "run"; x.t0 = performance.now(); }
+        x.size = j.total; x.done = j.done;
+        if (j.state === "done") { x.state = "done"; x.t1 = performance.now(); x.done = x.size; refresh(); }
+        if (j.state === "failed") { const c = j.error === "cancelled"; x.state = c ? "cancelled" : "failed"; x.error = c ? "Cancelled" : "Failed: " + j.error; x.t1 = performance.now(); refresh(); }
+      }
+    } catch (e) {}
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  polling = false;
+}
+
+// ---------------------------------------------------------------- help
+{
+  const c = `python3 sw2xfer.py --host ${location.hostname} --port ${location.port || 80}`;
+  $("helpCmds").textContent = [
+    "# upload a file or folder to the Switch",
+    `${c} upload /SourceFileOrFolder /DestinationPath`,
+    "# download a file or folder from the Switch",
+    `${c} download /SourceFileOrFolder /DestinationPath`,
+    "",
+    "# several sources at once: the last path is the destination",
+    `${c} upload game.iso MyFolder /roms/ps2`,
+    `${c} download /roms/ps2/game.iso /roms/ps2/Saves ~/Downloads`,
+    "",
+    "# list, make, delete, rename",
+    `${c} ls /path`,
+    `${c} mkdir /path/new`,
+    `${c} rm -r /path/old`,
+    `${c} mv /path/a /path/b`,
+    "",
+    "# cancel every transfer and copy (any device)",
+    `${c} cancel`,
+  ].join("\n");
+  $("help").onclick = () => $("helpDlg").showModal();
+  $("helpClose").onclick = () => $("helpDlg").close();
+  $("helpDlg").addEventListener("click", (e) => { if (e.target === $("helpDlg")) $("helpDlg").close(); });
+}
+refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+// SW2Transfer networking core.
+//
+// The Switch's socket service only allows a few concurrent IPC sessions
+// (libnx caps it at 16, and a blocked recv holds one), so connections are not
+// a thread each. A few network threads poll non-blocking sockets; reads and
+// writes of the SD card happen on a disk thread pool in 1 MB chunks. One file
+// can be served to or filled from many connections at once (positional I/O
+// on one shared handle), which is what makes multi-connection transfers fast.
+#pragma once
+#include <stdint.h>
+#include <atomic>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+#include <poll.h>
+#include "vfs.h"
+
+double nowSec();
+void logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+std::vector<std::string> recentLog(int n);
+void setLogFile(const char* path);
+
+// ------------------------------------------------------------------ stats
+// One entry per file and direction, shared by all connections moving it.
+struct Transfer {
+  std::string path;
+  bool upload;
+  bool copy = false;     // a copy on the card (shown as such)
+  std::atomic<bool> cancelled{false};
+  std::atomic<int64_t> bytes{0};
+  std::atomic<int64_t> total{-1};   // whole file size when known
+  std::atomic<int> conns{0};
+  double started = 0, lastActive = 0;
+  // UI-side smoothing
+  int64_t uiLastBytes = 0; double uiSpeed = 0;
+};
+using TransferRef = std::shared_ptr<Transfer>;
+TransferRef transferAttach(const std::string& path, bool upload, int64_t total);
+void transferDetach(const TransferRef& t);
+std::vector<TransferRef> transfersActive(double keepSec);  // active or recent
+extern std::atomic<int64_t> g_bytesUp, g_bytesDown;
+
+// Cancel all: every transfer running now is stopped, on every device.
+// Clients tag each file's requests with an id (?x=...); ids seen before a
+// cancel are refused afterwards (HTTP 410), so clients stop instead of
+// retrying. Half-written uploads are deleted.
+extern std::atomic<int> g_cancelEpoch;
+void cancelAll(const char* by);
+bool xferIdAllowed(const std::string& id);  // false = cancelled
+extern std::atomic<int> g_connections;
+
+// ------------------------------------------------------------------ disk pool
+struct Job {
+  std::function<void()> work;
+  std::atomic<bool> done{false};
+};
+using JobRef = std::shared_ptr<Job>;
+void diskStart(int threads);
+void diskStop();
+JobRef diskSubmit(std::function<void()> work);
+
+// ------------------------------------------------------------------ pump
+// Moves bytes between a non-blocking socket and a file (or memory),
+// double-buffered so the disk and the network work at the same time.
+enum { CHUNK = 1 << 20, NBUF = 3 };
+struct Buf {
+  std::vector<char> data;
+  size_t len = 0, pos = 0;
+  int64_t fileOff = 0;
+  int64_t result = 0;   // job result: bytes read, or 0/-1 for writes
+  JobRef job;
+  enum State { EMPTY, FILLING, FULL, DISK } state = EMPTY;
+};
+struct Pump {
+  enum Mode { NONE, SEND_MEM, SEND_FILE, RECV_FILE } mode = NONE;
+  std::string mem; size_t memPos = 0;
+  vfs::FileRef file;
+  int64_t nextOff = 0;          // next file offset to read/write
+  int64_t remaining = -1;       // bytes still to schedule (-1: until EOF / peer close)
+  bool srcEnd = false;          // no more data will come from the source
+  bool failed = false; std::string error;
+  std::deque<std::shared_ptr<Buf>> q;  // in file order
+  TransferRef stat;
+  int64_t moved = 0;
+
+  void sendMem(std::string s);
+  void sendFile(vfs::FileRef f, int64_t off, int64_t len, TransferRef st);
+  void recvFile(vfs::FileRef f, int64_t off, int64_t len, TransferRef st, const char* pre = nullptr, size_t preLen = 0);
+  void reset();
+  short events() const;         // POLLIN / POLLOUT wanted on the socket
+  // Returns false on socket error/peer close where it matters.
+  void onReadable(int fd);
+  void onWritable(int fd);
+  void tick();                  // collect finished disk jobs, schedule more
+  bool busy() const;            // disk jobs in flight
+  bool active() const { return mode != NONE; }
+  bool finished() const;
+};
+
+// ------------------------------------------------------------------ net loop
+struct Conn {
+  int fd = -1;
+  bool dead = false;
+  virtual ~Conn();
+  // Fill up to 4 pollfds (first one is normally fd), return how many.
+  virtual int pollfds(struct pollfd* out) = 0;
+  virtual void handle(const struct pollfd* in, int n) = 0;
+  virtual void tick() {}
+  virtual bool busy() { return false; }
+};
+using ConnFactory = std::function<Conn*(int fd)>;
+
+void tuneSocket(int fd);
+bool setNonBlocking(int fd);
+int listenOn(int port, std::string& err);
+bool sendAll(int fd, std::string& out);  // non-blocking: sends what it can, erases it; false on error
+
+// Starts the listeners and network threads. Returns false with err if a port
+// could not be opened.
+struct ServerConfig { int httpPort = 6967; int netThreads = 4; int diskThreads = 4; };
+bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err);
+void serverStop();
+
+// Screen capture for GET /api/screen: the UI thread fills it after drawing.
+struct ScreenGrab { std::mutex mu; bool want = false, ready = false; std::string png; };
+extern ScreenGrab g_screen;

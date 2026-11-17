@@ -1,0 +1,8 @@
+build/
+build-host/
+*.elf
+*.nacp
+*.map
+*.nro
+romfs/web/sw2xfer.py
+__pycache__/
