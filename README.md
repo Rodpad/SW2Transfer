@@ -10,10 +10,14 @@ different byte range, which is much faster over Wi-Fi than a single stream.
 |---|---|---|
 | **SW2Transfer, 8 connections (default)** | **51 MB/s** | **43 MB/s** |
 | SW2Transfer, 1 connection | 28 MB/s | 21 MB/s |
+| FTP (kaiHEN ftpd), 1 connection | 8.6 MB/s | 9.5 MB/s |
+| FTP (kaiHEN ftpd), download split over 4 connections | – | 26 MB/s |
 
-For comparison, the most I ever saw over FTP (kaiHEN ftpd) was 8.8 MB/s, so
-SW2Transfer is about 5 times faster. Measured with a Mac and the Switch 2
-both on Wi-Fi, moving a 256 MB file.
+SW2Transfer is about 5 times faster than FTP. Splitting an FTP download helps
+up to a point, but kaiHEN ftpd stopped answering beyond 4 connections at once,
+and common FTP apps don't split uploads. Before these tests, the most I had
+ever seen over FTP was 8.8 MB/s. All measured with a Mac and the Switch 2 both
+on Wi-Fi, moving a 256 MB file (every transfer checked byte for byte).
 
 ## Install
 
@@ -31,19 +35,18 @@ app is open.
 **No login:** while the app is open, anyone on your network can read, change
 or delete files on the SD card. Only run it on a network you trust.
 
-## Using it
+## Transferring files
 
 Open `http://<switch-ip>:6967` in a browser on the same network (the Switch
 screen shows the address; Y on the Switch and the page's Help button explain
 everything with examples).
 
-- Click folders to open them; uploads go into the folder you are in. Upload
-  files, upload a folder, or drag files and folders onto the page.
-- Tick items to download, copy, move or delete several at once; Copy to… and
-  Move to… pick the destination by clicking through folders. Copies run on the
-  Switch in the background with progress; moves never replace anything.
+- Uploads go into the folder you are in: Upload files, Upload folder, or drag
+  files and folders onto the page (subfolders are kept).
+- Click a file to download it, or tick several files and press Download.
+  Downloads over 3.5 GB use one connection.
 - Connections (default 8) and chunk size (default 2 MB) were the fastest
-  combination in tests over Wi-Fi. Downloads over 3.5 GB use one connection.
+  combination in tests over Wi-Fi.
 - Cancel all (web page), X twice (Switch) or `sw2xfer.py cancel` stops every
   transfer and copy, from any device; unfinished uploads and copies are
   deleted from the SD card.
@@ -54,9 +57,33 @@ Command line (Python 3; download it from `http://<switch-ip>:6967/sw2xfer.py`):
 python3 sw2xfer.py --host 192.168.1.168 upload /SourceFileOrFolder /DestinationPath
 python3 sw2xfer.py --host 192.168.1.168 download /SourceFileOrFolder /DestinationPath
 python3 sw2xfer.py --host 192.168.1.168 upload game.iso MyFolder /roms/ps2   # several sources, last path = destination
-python3 sw2xfer.py --host 192.168.1.168 ls /path
 python3 sw2xfer.py --host 192.168.1.168 cancel
 python3 sw2xfer.py --host 192.168.1.168 bench /path/test.bin --levels 1,4,8
+```
+
+## File management
+
+On the web page:
+
+- Click folders to open them; the path at the top jumps back up.
+- Name, Size, Created and Modified columns: click a header to sort by it,
+  click again to reverse. Folders stay above files.
+- New folder makes a folder here; each row has Rename and Delete (deleting a
+  folder removes everything in it).
+- Tick items (the box in the bar ticks the whole folder) to Copy to…, Move
+  to… or Delete several at once. Copy to… and Move to… pick the destination by
+  clicking through folders, no typing.
+- Copies run on the Switch in the background, with progress under Transfers;
+  a copy into the same folder is named "name copy". Moves are instant and
+  never replace an existing item, and a folder cannot go inside itself.
+
+Command line:
+
+```sh
+python3 sw2xfer.py --host 192.168.1.168 ls /path
+python3 sw2xfer.py --host 192.168.1.168 mkdir /path/new
+python3 sw2xfer.py --host 192.168.1.168 rm -r /path/old
+python3 sw2xfer.py --host 192.168.1.168 mv /path/a /path/b
 ```
 
 ## HTTP API
