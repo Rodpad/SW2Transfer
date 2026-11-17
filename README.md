@@ -38,7 +38,7 @@ everything with examples).
 Measured speeds with the defaults (Mac and Switch 2 both on Wi-Fi, 256 MB
 file): about 51 MB/s uploading to the Switch and 43 MB/s downloading, against
 28 / 21 MB/s with a single connection. For comparison, the most I ever saw
-over FTP was 8.8 MB/s.
+over FTP (kaiHEN ftpd) was 8.8 MB/s.
 
 Command line (Python 3; download it from `http://<switch-ip>:6967/sw2xfer.py`):
 
