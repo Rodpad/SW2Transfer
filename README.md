@@ -15,7 +15,9 @@ For comparison, the most I ever saw over FTP (kaiHEN ftpd) was 8.8 MB/s, so
 SW2Transfer is about 5 times faster. Measured with a Mac and the Switch 2
 both on Wi-Fi, moving a 256 MB file.
 
-Install: copy `sw2transfer.nro` to `sdmc:/switch/sw2transfer/` and launch it
+## Install
+
+Copy `sw2transfer.nro` to `sdmc:/switch/sw2transfer/` and launch it
 from hbmenu. The screen shows the console's address, live speed, and every
 file in flight with its connection count. The console stays awake while the
 app is open.
