@@ -36,6 +36,11 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16p
 .crumbs a { color: var(--text); text-decoration: none; padding: 2px 6px; border-radius: 6px; }
 .crumbs a:hover { background: var(--hover); }
 .crumbs .sep { color: var(--muted); }
+/* Current folder in the file panel: labelled, larger, current folder in full colour. */
+#crumbs { font-size: 16px; }
+#crumbs .where { color: var(--muted); font-weight: 500; font-size: 13px; margin-right: 6px; white-space: nowrap; }
+#crumbs a { color: var(--muted); }
+#crumbs a.here { color: var(--text); }
 table { width: 100%; border-collapse: collapse; }
 td { padding: 8px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
@@ -332,9 +337,12 @@ function crumbs() {
   const c = $("crumbs"); c.innerHTML = "";
   const parts = cwd.split("/").filter(Boolean);
   const mk = (label, path) => { const a = document.createElement("a"); a.href = "#"; a.textContent = label; a.onclick = (ev) => { ev.preventDefault(); go(path); }; return a; };
+  if (c.id === "crumbs") c.insertAdjacentHTML("beforeend", `<span class="where">&#128193; Current folder</span>`);
   c.append(mk("SD", "/"));
   let acc = "";
   for (const p of parts) { acc += "/" + p; const s = document.createElement("span"); s.className = "sep"; s.textContent = "/"; c.append(s, mk(p, acc)); }
+  c.lastChild.classList.add("here");  // the folder you are in
+  document.title = cwd === "/" ? "SW2Transfer" : `${cwd} \u2013 SW2Transfer`;
 }
 $("mkdir").onclick = async () => { const n = prompt("Folder name"); if (!n) return; await guard(() => api("POST", "/api/mkdir", { path: join(cwd, n) })); refresh(); };
 

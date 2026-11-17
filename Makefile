@@ -11,7 +11,7 @@ include $(DEVKITPRO)/libounce/switch2_rules
 
 APP_TITLE	:=	SW2Transfer
 APP_AUTHOR	:=	Rodpad
-APP_VERSION	:=	1.4.0
+APP_VERSION	:=	1.4.1
 
 TARGET		:=	sw2transfer
 BUILD		:=	build
