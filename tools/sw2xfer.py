@@ -157,16 +157,38 @@ def run_parallel(n, jobs, fn):
         raise errors[0]
 
 
+BINARY = getattr(os, "O_BINARY", 0)  # Windows: no newline translation
+
+
+def read_at(path, fd, n, off):
+    """Positional read; Windows has no os.pread, so open the file per chunk there."""
+    if hasattr(os, "pread"):
+        return os.pread(fd, n, off)
+    with open(path, "rb") as f:
+        f.seek(off)
+        return f.read(n)
+
+
+def write_at(path, fd, data, off):
+    """Positional write; Windows has no os.pwrite, so open the file per chunk there."""
+    if hasattr(os, "pwrite"):
+        os.pwrite(fd, data, off)
+        return
+    with open(path, "r+b") as f:
+        f.seek(off)
+        f.write(data)
+
+
 def upload_file(cl, local, remote, n, chunk):
     size = os.path.getsize(local)
     xid = uuid.uuid4().hex  # tags this file's requests so Cancel all can stop them
     cl.api("POST", "/api/create", path=remote, size=size, x=xid)
     prog = Progress(os.path.basename(local), size)
-    fd = os.open(local, os.O_RDONLY)
+    fd = os.open(local, os.O_RDONLY | BINARY)
     try:
         def put(off):
             ln = min(chunk, size - off)
-            data = os.pread(fd, ln, off)
+            data = read_at(local, fd, ln, off)
             r, body = cl.request("PUT", f"/ul{q(remote)}?offset={off}&total={size}&x={xid}", body=data,
                                  headers={"Content-Length": str(len(data)), "Content-Type": "application/octet-stream"})
             if r.status != 200:
@@ -187,7 +209,7 @@ def download_file(cl, remote, local, n, chunk):
         raise RuntimeError(f"{remote}: HTTP {r.status}")
     size = int(r.getheader("Content-Length", "0"))
     os.makedirs(os.path.dirname(os.path.abspath(local)), exist_ok=True)
-    fd = os.open(local, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o644)
+    fd = os.open(local, os.O_RDWR | os.O_CREAT | os.O_TRUNC | BINARY, 0o644)
     os.ftruncate(fd, size)
     prog = Progress(os.path.basename(remote), size)
     try:
@@ -196,7 +218,7 @@ def download_file(cl, remote, local, n, chunk):
             r, data = cl.request("GET", f"/dl{q(remote)}?x={xid}", headers={"Range": f"bytes={off}-{end}"})
             if r.status not in (200, 206) or len(data) != end - off + 1:
                 raise RuntimeError(f"GET {remote}@{off}: HTTP {r.status}, {len(data)} bytes")
-            os.pwrite(fd, data, off)
+            write_at(local, fd, data, off)
             prog.add(len(data))
         run_parallel(n, list(range(0, size, chunk)), get)
     except BaseException:
@@ -233,12 +255,17 @@ def cmd_put(cl, a):
     if not srcs:
         sys.exit("upload: give local files or folders, then the destination folder on the Switch")
     t0, total = time.time(), 0
+    # Several sources, a folder source or a trailing "/" mean "into this
+    # folder" (created if needed); one file to a new name means "save as".
+    into = len(srcs) > 1 or dest.endswith("/") or any(os.path.isdir(x) for x in srcs) or remote_kind(cl, dest) == "dir"
+    if into:
+        cl.api("POST", "/api/mkdir", path=dest.rstrip("/") or "/")
     for s in srcs:
-        s = s.rstrip("/") or s
+        s = s.rstrip("/\\") or s
         if os.path.isdir(s):
             base = os.path.basename(os.path.abspath(s))
             for root, _dirs, files in os.walk(s):
-                rel = os.path.relpath(root, s)
+                rel = os.path.relpath(root, s).replace(os.sep, "/")  # Switch paths use "/"
                 rdir = "/".join(p for p in (dest.rstrip("/"), base, "" if rel == "." else rel) if p)
                 cl.api("POST", "/api/mkdir", path=rdir or "/")
                 for f in sorted(files):
@@ -246,7 +273,7 @@ def cmd_put(cl, a):
                         continue
                     total += upload_file(cl, os.path.join(root, f), rdir + "/" + f, a.connections, a.chunk)
         else:
-            target = dest.rstrip("/") + "/" + os.path.basename(s) if dest.endswith("/") or remote_kind(cl, dest) == "dir" else dest
+            target = dest.rstrip("/") + "/" + os.path.basename(s) if into else dest
             total += upload_file(cl, s, target, a.connections, a.chunk)
     el = time.time() - t0
     print(f"uploaded {human(total)} in {el:.1f} s = {total / max(el, 1e-6) / (1 << 20):.2f} MB/s with {a.connections} connections")
@@ -255,6 +282,10 @@ def cmd_put(cl, a):
 def cmd_get(cl, a):
     *srcs, dest = a.paths if len(a.paths) > 1 else (a.paths + ["."])
     t0, total = time.time(), 0
+    # Same rule as upload: several sources or an existing folder = "into".
+    into = len(srcs) > 1 or os.path.isdir(dest) or dest.endswith(("/", os.sep))
+    if into:
+        os.makedirs(dest, exist_ok=True)
 
     def get_tree(rpath, ldir):
         nonlocal total
@@ -271,7 +302,7 @@ def cmd_get(cl, a):
         if kind == "dir":
             get_tree(s, os.path.join(dest, os.path.basename(s.rstrip("/")) or "sd"))
         elif kind == "file":
-            target = os.path.join(dest, os.path.basename(s)) if os.path.isdir(dest) else dest
+            target = os.path.join(dest, os.path.basename(s)) if into else dest
             total += download_file(cl, s, target, a.connections, a.chunk)
         else:
             sys.exit(f"download: {s} not found on the Switch")
@@ -336,11 +367,14 @@ def main():
         elif a.cmd == "mkdir":
             for x in a.paths:
                 cl.api("POST", "/api/mkdir", path=x)
+                print(f"made {x}")
         elif a.cmd == "rm":
             for x in a.paths:
                 cl.api("POST", "/api/delete", path=x, recursive="1" if a.recursive else "0")
+                print(f"deleted {x}")
         elif a.cmd == "mv":
             cl.api("POST", "/api/rename", **{"from": a.paths[0], "to": a.paths[1]})
+            print(f"moved {a.paths[0]} -> {a.paths[1]}")
         elif a.cmd == "cancel":
             cl.api("POST", "/api/cancel")
             print("cancelled all transfers and copies")
