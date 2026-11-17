@@ -52,11 +52,11 @@ everything with examples).
 Command line (Python 3; download it from `http://<switch-ip>:6967/sw2xfer.py`):
 
 ```sh
-python3 sw2xfer.py --host 192.168.1.168 upload /SourceFileOrFolder /DestinationPath
-python3 sw2xfer.py --host 192.168.1.168 download /SourceFileOrFolder /DestinationPath
-python3 sw2xfer.py --host 192.168.1.168 upload game.iso MyFolder /roms/ps2   # several sources, last path = destination
-python3 sw2xfer.py --host 192.168.1.168 cancel
-python3 sw2xfer.py --host 192.168.1.168 bench /path/test.bin --levels 1,4,8
+python3 sw2xfer.py --host <switch-ip> upload /SourceFileOrFolder /DestinationPath
+python3 sw2xfer.py --host <switch-ip> download /SourceFileOrFolder /DestinationPath
+python3 sw2xfer.py --host <switch-ip> upload game.iso MyFolder /roms/ps2   # several sources, last path = destination
+python3 sw2xfer.py --host <switch-ip> cancel
+python3 sw2xfer.py --host <switch-ip> bench /path/test.bin --levels 1,4,8
 ```
 
 ## File management
@@ -78,10 +78,10 @@ On the web page:
 Command line:
 
 ```sh
-python3 sw2xfer.py --host 192.168.1.168 ls /path
-python3 sw2xfer.py --host 192.168.1.168 mkdir /path/new
-python3 sw2xfer.py --host 192.168.1.168 rm -r /path/old
-python3 sw2xfer.py --host 192.168.1.168 mv /path/a /path/b
+python3 sw2xfer.py --host <switch-ip> ls /path
+python3 sw2xfer.py --host <switch-ip> mkdir /path/new
+python3 sw2xfer.py --host <switch-ip> rm -r /path/old
+python3 sw2xfer.py --host <switch-ip> mv /path/a /path/b
 ```
 
 ## HTTP API

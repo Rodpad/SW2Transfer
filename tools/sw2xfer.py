@@ -13,7 +13,7 @@ single connection.
   sw2xfer.py cancel                                stop every transfer and copy (any device)
   sw2xfer.py bench [/remote/file] [--size 512M]    upload + download speed test (file deleted after)
 
-Options: --host (or SW2XFER_HOST, default 192.168.1.168), --port 6967,
+Options: --host <switch-ip> (shown on the Switch screen; or set SW2XFER_HOST), --port 6967,
 -n/--connections 8, --chunk 2M (fastest in tests: 8 connections, 2 MB chunks).
 """
 import argparse
@@ -27,7 +27,7 @@ import time
 import urllib.parse
 import uuid
 
-DEFAULT_HOST = os.environ.get("SW2XFER_HOST", "192.168.1.168")
+DEFAULT_HOST = os.environ.get("SW2XFER_HOST")  # the Switch's address; shown on its screen
 
 
 def parse_size(s):
@@ -356,6 +356,8 @@ def main():
     p.add_argument("--size", type=parse_size, default=256 << 20, help="bench file size")
     p.add_argument("--levels", type=lambda s: [int(x) for x in s.split(",")], default=[1, 4, 8], help="bench connection counts")
     a = p.parse_args()
+    if not a.host:
+        p.error("give the Switch's address with --host <switch-ip> (it is shown on the Switch screen), or set SW2XFER_HOST")
     cl = Client(a.host, a.port)
     try:
         if a.cmd in ("upload", "put"):  # put/get: older names
