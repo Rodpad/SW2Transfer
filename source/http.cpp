@@ -13,6 +13,7 @@
 // separate connections; a download is many ranged GETs. Keep-alive is used.
 #include "net.h"
 #include "ops.h"
+#include "auth.h"
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -20,6 +21,8 @@
 #include <chrono>
 #include <thread>
 #include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 extern std::string g_webPage, g_clientScript, g_favicon;
 extern const char* g_appVersion;
@@ -59,11 +62,11 @@ std::string jsonStr(const std::string& s) {
 
 std::string headString(int code, const std::string& type, int64_t len, bool keepAlive, const std::string& extra) {
   const char* reason = code == 200 ? "OK" : code == 206 ? "Partial Content" : code == 400 ? "Bad Request" : code == 404 ? "Not Found" :
-                       code == 416 ? "Range Not Satisfiable" : code == 410 ? "Gone" : code == 409 ? "Conflict" : code == 500 ? "Internal Server Error" : "Error";
+                       code == 416 ? "Range Not Satisfiable" : code == 410 ? "Gone" : code == 401 ? "Unauthorized" : code == 429 ? "Too Many Requests" : code == 409 ? "Conflict" : code == 500 ? "Internal Server Error" : "Error";
   std::string out = "HTTP/1.1 " + std::to_string(code) + " " + reason + "\r\n";
   out += "Content-Type: " + type + "\r\nContent-Length: " + std::to_string(len) + "\r\n";
-  out += "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, PUT, POST, OPTIONS\r\n";
-  out += "Access-Control-Allow-Headers: *\r\nAccess-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges\r\n";
+  // No Access-Control-Allow-Origin: only the page served from here (and
+  // non-browser clients) may use the API, not other websites.
   out += "Accept-Ranges: bytes\r\nCache-Control: no-store\r\n";
   out += keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
   return out + extra + "\r\n";
@@ -175,6 +178,11 @@ struct HttpConn : Conn {
     if (state == HEADERS) parseRequest();
   }
 
+  std::string peerName() {
+    sockaddr_in a{}; socklen_t al = sizeof a;
+    if (getpeername(fd, (sockaddr*)&a, &al)) return "?";
+    return inet_ntoa(a.sin_addr);
+  }
   std::string header(const std::string& k) { auto it = headers.find(k); return it == headers.end() ? "" : it->second; }
 
   void respond(int code, const std::string& type, const std::string& body, const std::string& extra = "") {
@@ -242,21 +250,69 @@ struct HttpConn : Conn {
     state = WAIT_JOB;
   }
 
+  // Answers with an error, then reads and drops any request body: a client
+  // still sending an upload only sees the answer if we do not close on it.
+  void refuse(int code, const std::string& body) {
+    keepAlive = false;
+    respond(code, "application/json", body);
+    int64_t len = atoll(header("content-length").c_str());
+    int64_t have = std::min<int64_t>((int64_t)in.size(), len > 0 ? len : 0);
+    in.erase(0, have);
+    discardLeft = len > have ? len - have : 0;
+    if (discardLeft > 0) { state = DISCARD; return; }
+    finishRequest();
+  }
+
+  // Login token from "Authorization: Bearer <t>" (command line) or the
+  // sw2t cookie (browser).
+  std::string token() {
+    std::string a = header("authorization");
+    if (a.compare(0, 7, "Bearer ") == 0) return a.substr(7);
+    std::string c = header("cookie");
+    size_t p = c.find("sw2t=");
+    while (p != std::string::npos && p > 0 && c[p - 1] != ' ' && c[p - 1] != ';') p = c.find("sw2t=", p + 1);
+    if (p == std::string::npos) return "";
+    size_t e = c.find(';', p);
+    return c.substr(p + 5, e == std::string::npos ? std::string::npos : e - p - 5);
+  }
+
   void route() {
     if (method == "OPTIONS") { respond(200, "text/plain", ""); return finishRequest(); }
-    // Requests of a transfer that was cancelled are refused, so clients stop.
-    if (!xferIdAllowed(q("x"))) {
-      // Answer 410, then read and drop the body: a client still sending an
-      // upload only sees the answer if we do not close on it mid-send.
-      keepAlive = false;
-      error(410, "cancelled");
-      int64_t len = atoll(header("content-length").c_str());
-      int64_t have = std::min<int64_t>((int64_t)in.size(), len > 0 ? len : 0);
-      in.erase(0, have);
-      discardLeft = len > have ? len - have : 0;
-      if (discardLeft > 0) { state = DISCARD; return; }
+    // Password: everything except the page itself, its icon, the client
+    // script, info and login needs a valid token when a password is set.
+    bool open = (method == "GET" && (reqPath == "/" || reqPath == "/index.html" || reqPath == "/favicon.png" ||
+                                     reqPath == "/favicon.ico" || reqPath == "/sw2xfer.py")) ||
+                reqPath == "/api/info" || reqPath == "/api/login" || reqPath == "/api/logout";
+    if (!open && auth::enabled() && !auth::checkToken(token()))
+      return refuse(401, "{\"ok\":false,\"error\":\"password required\",\"login\":true}");
+    if (method == "POST" && reqPath == "/api/login") {
+      int left = 0;
+      if (auth::loginLocked(&left))
+        return refuse(429, "{\"ok\":false,\"error\":\"too many wrong passwords, try again in " + std::to_string(left) + " s\"}");
+      std::string pw = urlDecodePath(header("x-sw2-password"));  // URL-encoded by the clients (headers are ASCII)
+      std::string peer = peerName();
+      drainBody();
+      // PBKDF2 takes a moment: check it on the disk pool.
+      async([pw, peer](bool ka) {
+        if (!auth::enabled()) return jsonResponse(200, "{\"ok\":true,\"token\":\"\",\"expires\":0}", ka);
+        bool ok = auth::checkPassword(pw);
+        auth::loginResult(ok);
+        logf("login from %s: %s", peer.c_str(), ok ? "ok" : "wrong password");
+        if (!ok) return jsonResponse(401, "{\"ok\":false,\"error\":\"wrong password\",\"login\":true}", ka);
+        std::string t = auth::makeToken(auth::TOKEN_SECONDS);
+        std::string body = "{\"ok\":true,\"token\":\"" + t + "\",\"expires\":" + t.substr(0, t.find('.')) + "}";
+        std::string cookie = "Set-Cookie: sw2t=" + t + "; Max-Age=" + std::to_string((long long)auth::TOKEN_SECONDS) + "; Path=/; HttpOnly; SameSite=Strict\r\n";
+        return headString(200, "application/json", (int64_t)body.size(), ka, cookie) + body;
+      });
+      return;
+    }
+    if (method == "POST" && reqPath == "/api/logout") {
+      drainBody();
+      respond(200, "application/json", "{\"ok\":true}", "Set-Cookie: sw2t=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict\r\n");
       return finishRequest();
     }
+    // Requests of a transfer that was cancelled are refused, so clients stop.
+    if (!xferIdAllowed(q("x"))) return refuse(410, "{\"ok\":false,\"error\":\"cancelled\"}");
     if (method == "GET" && (reqPath == "/" || reqPath == "/index.html")) {
       respond(200, "text/html; charset=utf-8", g_webPage); return finishRequest();
     }
@@ -270,7 +326,8 @@ struct HttpConn : Conn {
     }
     if (reqPath == "/api/info") {
       int64_t fr = vfs::freeSpace();
-      respond(200, "application/json", std::string("{\"name\":\"SW2Transfer\",\"version\":") + jsonStr(g_appVersion) + ",\"free\":" + std::to_string(fr) + "}");
+      respond(200, "application/json", std::string("{\"name\":\"SW2Transfer\",\"version\":") + jsonStr(g_appVersion) + ",\"free\":" + std::to_string(fr) +
+                                             ",\"auth\":" + (auth::enabled() ? "true" : "false") + "}");
       return finishRequest();
     }
     if (reqPath == "/api/list") {

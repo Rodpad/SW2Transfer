@@ -14,6 +14,7 @@
 #include <math.h>
 #include "net.h"
 #include "ops.h"
+#include "auth.h"
 
 std::string g_webPage, g_clientScript, g_favicon;
 const char* g_appVersion = APP_VERSION;
@@ -77,6 +78,7 @@ static void drawHelp(const std::string& host, int port) {
     {1, "3. Upload files / Upload folder, or drag files and whole folders onto the page (subfolders are kept)."},
     {1, "4. Click a file to download it. Each row has Rename and Delete; New folder makes a folder."},
     {1, "5. Connections and Chunk: 8 and 2 MB were fastest in tests. Transfers show their speed live."},
+    {1, "Password: press \xE2\x80\x93 to set, change or remove it. Browsers and the command line then ask for it once every 12 hours."},
     {1, "6. Cancel all (web page), X twice (here) or the cancel command stops every transfer and copy; unfinished ones are deleted."},
     {3, ""},
     {0, "Command line (Mac, Windows, Linux with Python 3)"},
@@ -132,6 +134,26 @@ static gfx::Image* loadIcon(int px, float radius) {
   return im;
 }
 
+// System keyboard in password mode. Returns 1 with text, 0 if cancelled,
+// -1 if the keyboard could not be opened (err set).
+static int askPassword(const char* header, const char* sub, std::string& out, std::string& err) {
+  SwkbdConfig kbd;
+  Result rc = swkbdCreate(&kbd, 0);
+  if (R_FAILED(rc)) { char b[64]; snprintf(b, sizeof b, "keyboard unavailable (0x%x)", rc); err = b; return -1; }
+  swkbdConfigMakePresetPassword(&kbd);
+  swkbdConfigSetHeaderText(&kbd, header);
+  swkbdConfigSetSubText(&kbd, sub);
+  swkbdConfigSetGuideText(&kbd, "Password");
+  swkbdConfigSetStringLenMin(&kbd, 0);
+  swkbdConfigSetStringLenMax(&kbd, 64);
+  char buf[512] = {0};
+  rc = swkbdShow(&kbd, buf, sizeof buf);
+  swkbdClose(&kbd);
+  if (R_FAILED(rc)) return 0;  // B / cancelled
+  out = buf;
+  return 1;
+}
+
 int main(int, char**) {
   romfsInit();
   mkdir(DATA_DIR, 0777);
@@ -145,6 +167,8 @@ int main(int, char**) {
   { std::ifstream w("romfs:/web/favicon.png", std::ios::binary); std::stringstream ss; ss << w.rdbuf(); g_favicon = ss.str(); }
   { std::ifstream w("romfs:/web/sw2xfer.py"); std::stringstream ss; ss << w.rdbuf(); g_clientScript = ss.str(); }
   vfs::init("");
+  auth::init("sdmc:/switch/sw2transfer/settings.json");
+  logf("password: %s", auth::enabled() ? "on" : "off");
 
   ServerConfig cfg;
   std::string err;
@@ -176,11 +200,31 @@ int main(int, char**) {
   std::string ip = ipString(); double ipCheck = nowSec();
 
   bool showHelp = false;
+  std::string toast; bool toastBad = false; double toastUntil = 0;  // short message after setting a password
   double cancelAsk = 0;  // X pressed once at this time: press again within 3 s to cancel all
   while (appletMainLoop()) {
     padUpdate(&pad);
     u64 down = padGetButtonsDown(&pad);
     if (down & HidNpadButton_Plus) break;
+    if ((down & HidNpadButton_Minus) && !showHelp) {
+      // Set, change or remove the password with the system keyboard.
+      bool had = auth::enabled();
+      std::string pw, again, kerr;
+      int r = askPassword(had ? "Change the password" : "Set a password",
+                          had ? "Leave blank to remove the password." : "Browsers and the command line will ask for it.", pw, kerr);
+      if (r < 0) { toast = "Cannot set a password: " + kerr; toastBad = true; }
+      else if (r > 0 && pw.empty()) {
+        if (had) { bool ok = auth::setPassword(""); toast = ok ? "Password removed" : "Could not save the setting"; toastBad = !ok; if (ok) logf("password removed"); }
+      } else if (r > 0) {
+        int r2 = askPassword("Type the password again", "To make sure it is right.", again, kerr);
+        if (r2 > 0 && again == pw) {
+          bool ok = auth::setPassword(pw);
+          toast = ok ? "Password set: everyone signs in again" : "Could not save the password"; toastBad = !ok;
+          if (ok) logf("password set");
+        } else if (r2 > 0) { toast = "The passwords did not match; nothing changed"; toastBad = true; }
+      }
+      if (!toast.empty()) toastUntil = nowSec() + 4;
+    }
     if (down & HidNpadButton_Y) showHelp = !showHelp;
     if (down & HidNpadButton_B) { showHelp = false; cancelAsk = 0; }
     if ((down & HidNpadButton_X) && !showHelp) {
@@ -238,6 +282,9 @@ int main(int, char**) {
       gfx::text("http://" + host + ":" + std::to_string(cfg.httpPort), M + 28, y + 44, 30, ACCENT, gfx::MONO);
       const char* hint = "Open on any computer or phone on the same network";
       gfx::text(hint, W - M - 28 - gfx::textWidth(hint, 16), y + 54, 16, MUTED);
+      bool locked = auth::enabled();
+      const char* pwText = locked ? "Password protected" : "No password: anyone on your network can open it (press \xE2\x80\x93 to set one)";
+      gfx::text(pwText, W - M - 28 - gfx::textWidth(pwText, 16, gfx::BOLD), y + 16, 16, locked ? DOWN : MUTED, gfx::BOLD);
       y += h + 14;
     }
     {  // terminal
@@ -317,13 +364,19 @@ int main(int, char**) {
     float ly = gfx::UI_H - 76;
     for (auto& l : logs) { gfx::text(gfx::ellipsize(l, W - 2 * M, 15, gfx::MONO), M, ly, 15, MUTED, gfx::MONO); ly += 20; }
     if (cancelAsk > 0 && nowSec() - cancelAsk >= 3.0) cancelAsk = 0;
+    if (toastUntil > 0 && nowSec() > toastUntil) { toastUntil = 0; toast.clear(); }
+    if (!toast.empty()) {
+      float aw = gfx::textWidth(toast, 20, gfx::BOLD) + 48;
+      gfx::rect((W - aw) / 2, gfx::UI_H - 132, aw, 44, toastBad ? ACCENT : rgb(0x2f8f4e), 22);
+      gfx::text(toast, (W - aw) / 2 + 24, gfx::UI_H - 122, 20, TEXT, gfx::BOLD);
+    }
     if (cancelAsk > 0) {
       const char* ask = "Press X again to cancel all transfers";
       float aw = gfx::textWidth(ask, 20, gfx::BOLD) + 48;
       gfx::rect((W - aw) / 2, gfx::UI_H - 132, aw, 44, ACCENT, 22);
       gfx::text(ask, (W - aw) / 2 + 24, gfx::UI_H - 122, 20, TEXT, gfx::BOLD);
     }
-    const char* keys = "X  Cancel all      Y  Help      +  Exit";
+    const char* keys = "\xE2\x80\x93  Password      X  Cancel all      Y  Help      +  Exit";
     gfx::text(keys, W - M - gfx::textWidth(keys, 18, gfx::BOLD), gfx::UI_H - 34, 18, TEXT, gfx::BOLD);
     snprintf(line, sizeof line, "This session: uploaded %s, downloaded %s   \xC2\xB7   Sockets: %s",
              human((double)g_bytesUp).c_str(), human((double)g_bytesDown).c_str(), sockMode.empty() ? "unavailable" : sockMode.c_str());

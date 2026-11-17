@@ -11,12 +11,18 @@ single connection.
   sw2xfer.py ls /path                              list a folder
   sw2xfer.py mkdir /path/new   |  rm /path [-r]  |  mv /a /b
   sw2xfer.py cancel                                stop every transfer and copy (any device)
+  sw2xfer.py logout                                forget the saved password sign-in
+
+If the Switch has a password, you are asked for it once; the sign-in is kept
+for 12 hours (in ~/.config/sw2xfer, or %APPDATA%\\sw2xfer on Windows). For
+scripts, set SW2XFER_PASSWORD instead.
   sw2xfer.py bench [/remote/file] [--size 512M]    upload + download speed test (file deleted after)
 
 Options: --host <switch-ip> (shown on the Switch screen; or set SW2XFER_HOST), --port 6967,
 -n/--connections 8, --chunk 2M (fastest in tests: 8 connections, 2 MB chunks).
 """
 import argparse
+import getpass
 import http.client
 import json
 import os
@@ -52,10 +58,71 @@ class Cancelled(RuntimeError):
     """The transfer was cancelled (Cancel all on the Switch, the web page or `cancel`)."""
 
 
+def token_path():
+    base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "sw2xfer", "tokens.json")
+
+
+def load_tokens():
+    try:
+        with open(token_path()) as f:
+            t = json.load(f)
+        now = time.time()
+        return {k: v for k, v in t.items() if v.get("expires", 0) > now + 60}  # drop expired ones
+    except (OSError, ValueError):
+        return {}
+
+
+def save_tokens(t):
+    path = token_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # readable by you only
+    with os.fdopen(fd, "w") as f:
+        json.dump(t, f)
+    os.replace(path + ".tmp", path)
+
+
 class Client:
     def __init__(self, host, port, timeout=60):
         self.host, self.port, self.timeout = host, port, timeout
         self.local = threading.local()
+        self.key = f"{host}:{port}"
+        self.token = load_tokens().get(self.key, {}).get("token")
+        self.auth_lock = threading.Lock()
+
+    def login(self, seen):
+        """Ask for the password (once, even with many connections waiting) and keep the sign-in."""
+        with self.auth_lock:
+            if self.token != seen:
+                return  # another connection signed in meanwhile
+            env = os.environ.get("SW2XFER_PASSWORD")
+            for attempt in range(3):
+                try:
+                    pw = env if env is not None else getpass.getpass(f"Password for SW2Transfer at {self.key}: ")
+                except EOFError:
+                    raise RuntimeError("this Switch needs a password: run in a terminal, or set SW2XFER_PASSWORD")
+                c = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout)
+                try:
+                    c.request("POST", "/api/login", headers={"X-SW2-Password": urllib.parse.quote(pw, safe="")})
+                    r = c.getresponse()
+                    j = json.loads(r.read() or b"{}")
+                except (OSError, http.client.HTTPException, ValueError) as e:
+                    raise RuntimeError(f"login: {e}")
+                finally:
+                    c.close()
+                if r.status == 200 and j.get("ok"):
+                    self.token = j.get("token") or None
+                    t = load_tokens()
+                    if self.token:
+                        t[self.key] = {"token": self.token, "expires": j.get("expires", time.time() + 12 * 3600)}
+                        save_tokens(t)
+                    return
+                if r.status == 429:
+                    raise RuntimeError(j.get("error", "too many wrong passwords"))
+                if env is not None:
+                    raise RuntimeError("wrong password in SW2XFER_PASSWORD")
+                print("Wrong password.", file=sys.stderr)
+            raise RuntimeError("wrong password")
 
     def conn(self):
         c = getattr(self.local, "c", None)
@@ -72,12 +139,25 @@ class Client:
 
     def request(self, method, path, body=None, headers=None, tries=3):
         last = None
-        for attempt in range(tries):
+        logins = 0
+        attempt = 0
+        while attempt < tries:
+            attempt += 1
             try:
                 c = self.conn()
-                c.request(method, path, body=body, headers=headers or {})
+                h = dict(headers or {})
+                seen = self.token
+                if seen:
+                    h["Authorization"] = "Bearer " + seen
+                c.request(method, path, body=body, headers=h)
                 r = c.getresponse()
                 data = r.read()
+                if r.status == 401 and logins < 3:
+                    self.drop()
+                    self.login(seen)
+                    logins += 1
+                    attempt -= 1  # signing in is not a failed try
+                    continue
                 if r.status == 410:
                     self.drop()
                     raise Cancelled("cancelled")
@@ -87,7 +167,7 @@ class Client:
             except (OSError, http.client.HTTPException) as e:
                 last = e
                 self.drop()
-                time.sleep(0.3 * (attempt + 1))
+                time.sleep(0.3 * attempt)
         raise RuntimeError(f"{method} {path}: {last}")
 
     def api(self, method, endpoint, **params):
@@ -345,8 +425,8 @@ def cmd_bench(cl, a):
 def main():
     p = argparse.ArgumentParser(description="Multi-connection transfers to SW2Transfer on the Switch 2.",
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    p.add_argument("cmd", choices=["upload", "download", "ls", "mkdir", "rm", "mv", "cancel", "bench", "info", "put", "get"], metavar="command",
-                   help="upload, download, ls, mkdir, rm, mv, cancel, bench, info")
+    p.add_argument("cmd", choices=["upload", "download", "ls", "mkdir", "rm", "mv", "cancel", "logout", "bench", "info", "put", "get"], metavar="command",
+                   help="upload, download, ls, mkdir, rm, mv, cancel, logout, bench, info")
     p.add_argument("paths", nargs="*")
     p.add_argument("--host", default=DEFAULT_HOST)
     p.add_argument("--port", type=int, default=6967)
@@ -377,6 +457,11 @@ def main():
         elif a.cmd == "mv":
             cl.api("POST", "/api/rename", **{"from": a.paths[0], "to": a.paths[1]})
             print(f"moved {a.paths[0]} -> {a.paths[1]}")
+        elif a.cmd == "logout":
+            t = load_tokens()
+            t.pop(cl.key, None)
+            save_tokens(t)
+            print(f"signed out of {cl.key}")
         elif a.cmd == "cancel":
             cl.api("POST", "/api/cancel")
             print("cancelled all transfers and copies")

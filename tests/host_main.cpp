@@ -1,6 +1,7 @@
 // Host build of the SW2Transfer servers for testing on the Mac:
 //   tests/host_build.sh && build-host/sw2transfer-host <root dir> [httpPort]
 #include "../source/net.h"
+#include "../source/auth.h"
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,9 @@ int main(int argc, char** argv) {
   std::ifstream w("romfs/web/index.html"); std::stringstream ss; ss << w.rdbuf(); g_webPage = ss.str();
   { std::ifstream c("romfs/web/favicon.png", std::ios::binary); std::stringstream cs; cs << c.rdbuf(); g_favicon = cs.str(); }
   { std::ifstream c("tools/sw2xfer.py"); std::stringstream cs; cs << c.rdbuf(); g_clientScript = cs.str(); }
+  // Password settings next to the served folder; SW2T_PASSWORD sets one at start.
+  auth::init(std::string(argv[1]) + "/../sw2t-settings.json");
+  if (const char* pw = getenv("SW2T_PASSWORD")) auth::setPassword(pw);
   ServerConfig cfg;
   if (argc > 2) cfg.httpPort = atoi(argv[2]);
   std::string err;

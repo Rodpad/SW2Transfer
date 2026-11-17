@@ -52,6 +52,7 @@ th.sorted { color: var(--text); }
 th.sorted .arrow { opacity: 1; color: var(--accent); }
 td.act button { padding: 3px 8px; font-size: 13px; }
 td.sel { width: 1%; padding-right: 0; }
+input[type=password] { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; }
 input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
 tr.row.picked { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .selbar { background: var(--bg); }
@@ -114,6 +115,7 @@ h2 { font-size: 14px; margin: 0; }
     <div class="bar">
       <div class="crumbs" id="crumbs"></div>
       <span class="spacer"></span>
+      <button id="logout" hidden>Sign out</button>
       <button id="help">Help</button>
       <button id="mkdir">New folder</button>
       <button id="upFolder">Upload folder</button>
@@ -138,6 +140,12 @@ h2 { font-size: 14px; margin: 0; }
     <div id="xfers"><div class="empty">Nothing yet. Each file is split into chunks that several connections move at once.</div></div>
   </section>
 </main>
+<dialog id="loginDlg"><form class="help" id="loginForm">
+  <div class="top"><h2>Password</h2></div>
+  <p>This Switch is password protected. You stay signed in on this browser for 12 hours.</p>
+  <p><input type="password" id="loginPw" autocomplete="current-password" placeholder="Password" style="width:100%"></p>
+  <div class="pickfoot"><span class="meta" id="loginMsg"></span><span class="spacer"></span><button class="primary" id="loginGo" type="submit">Sign in</button></div>
+</form></dialog>
 <dialog id="pickDlg"><div class="help">
   <div class="top"><h2 id="pickTitle"></h2></div>
   <div class="crumbs" id="pickCrumbs"></div>
@@ -159,6 +167,7 @@ h2 { font-size: 14px; margin: 0; }
     <li>Files over 3.5 GB download over a single connection.</li>
     <li>Each row has <b>Rename</b> and <b>Delete</b> (deleting a folder removes everything in it). <b>New folder</b> makes a folder here.</li>
     <li>Tick the boxes to work on several items: <b>Download</b> saves the ticked files, <b>Copy to&hellip;</b> and <b>Move to&hellip;</b> let you click through folders to pick the destination, <b>Delete</b> removes them. The box in the bar ticks everything in the folder.</li>
+    <li><b>Password:</b> press &minus; on the Switch to set one. This page then asks for it, and keeps you signed in for 12 hours; <b>Sign out</b> ends it early.</li>
     <li><b>Cancel all</b> (under Transfers) stops every transfer and copy, from any device. Unfinished uploads and copies are deleted from the Switch. On the Switch, press X twice; in a terminal, <code>sw2xfer.py cancel</code>.</li>
     <li>Copies run on the Switch and show their progress under Transfers. A copy into the same folder is named &ldquo;name copy&rdquo;. Moves are instant and never replace an existing item.</li>
     <li>To download a whole folder to your computer, use the command-line client below.</li>
@@ -187,8 +196,34 @@ function human(n) {
   do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
   return n.toFixed(n < 10 ? 2 : 1) + " " + u[i];
 }
-async function api(method, ep, params) {
+// Password: when the Switch answers 401, ask once (all waiting requests
+// share the prompt), then retry. The Switch keeps you signed in for 12 hours.
+class NeedLogin extends Error { constructor() { super("Password required"); this.login = true; } }
+let loginWait = null;
+function ensureLogin() {
+  if (loginWait) return loginWait;
+  loginWait = new Promise((resolve) => {
+    const dlg = $("loginDlg"), pw = $("loginPw"), msg = $("loginMsg");
+    msg.textContent = ""; pw.value = "";
+    dlg.showModal(); pw.focus();
+    $("loginForm").onsubmit = async (ev) => {
+      ev.preventDefault();
+      $("loginGo").disabled = true; msg.textContent = "Checking\u2026";
+      try {
+        const r = await fetch("/api/login", { method: "POST", headers: { "X-SW2-Password": encodeURIComponent(pw.value) } });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.ok) { dlg.close(); loginWait = null; $("logout").hidden = false; resolve(); return; }
+        msg.textContent = j.error === "wrong password" ? "Wrong password" : (j.error || "HTTP " + r.status);
+        pw.select();
+      } catch (e) { msg.textContent = "Cannot reach the Switch"; }
+      finally { $("loginGo").disabled = false; }
+    };
+  });
+  return loginWait;
+}
+async function api(method, ep, params, retried) {
   const r = await fetch(ep + "?" + new URLSearchParams(params), { method });
+  if (r.status === 401 && !retried) { await ensureLogin(); return api(method, ep, params, true); }
   const j = await r.json().catch(() => ({ ok: false, error: "HTTP " + r.status }));
   if (!r.ok || j.ok === false) throw new Error(j.error || "HTTP " + r.status);
   return j;
@@ -340,6 +375,7 @@ class Cancelled extends Error { constructor() { super("Cancelled"); this.cancell
 const isCancel = (e) => e && (e.cancelled || e.name === "AbortError");
 function check(r) {
   if (r.status === 410) throw new Cancelled();
+  if (r.status === 401) throw new NeedLogin();
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r;
 }
@@ -360,6 +396,7 @@ async function parallel(count, n, task) {
         try { await task(i); break; }
         catch (e) {
           if (failed) return;
+          if (e && e.login) { await ensureLogin(); attempt--; continue; }  // sign in, then retry this chunk
           if (isCancel(e) || attempt >= 3) { failed = e; return; }
           await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
         }
@@ -618,6 +655,10 @@ async function pollCopies() {
   $("helpClose").onclick = () => $("helpDlg").close();
   $("helpDlg").addEventListener("click", (e) => { if (e.target === $("helpDlg")) $("helpDlg").close(); });
 }
+$("logout").onclick = async () => { await fetch("/api/logout", { method: "POST" }).catch(() => {}); location.reload(); };
+// The login box cannot be dismissed with Esc: nothing works without it.
+$("loginDlg").addEventListener("cancel", (e) => e.preventDefault());
+api("GET", "/api/info", {}).then((j) => { $("logout").hidden = !j.auth; }).catch(() => {});
 refresh();
 </script>
 </body>

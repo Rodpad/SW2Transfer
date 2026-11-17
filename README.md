@@ -26,12 +26,30 @@ app is open.
 
 | Button | Action |
 |---|---|
+| − | Set, change or remove the password |
 | X (twice) | Cancel all transfers and copies |
 | Y | Help |
 | + | Exit |
 
-**No login:** while the app is open, anyone on your network can read, change
-or delete files on the SD card. Only run it on a network you trust.
+## Password
+
+By default there is no password: while the app is open, anyone on your
+network can read, change or delete files on the SD card. Press − on the
+Switch to set one with the on-screen keyboard (type it twice; leave it blank
+to remove it). After that:
+
+- the web page asks for it and keeps you signed in on that browser for
+  12 hours (Sign out ends it early);
+- `sw2xfer.py` asks once and keeps the sign-in for 12 hours, in
+  `~/.config/sw2xfer/` (`%APPDATA%\sw2xfer\` on Windows); `sw2xfer.py logout`
+  forgets it, and `SW2XFER_PASSWORD` supplies it to scripts;
+- changing or removing the password signs everyone out;
+- after 5 wrong passwords in a row, sign-in is refused for 30 seconds.
+
+The password is not stored, only a salted PBKDF2-SHA256 hash, in
+`/switch/sw2transfer/settings.json`. Traffic is plain HTTP, so the password
+crosses your network unencrypted: it keeps people on your network out, it is
+not protection for an untrusted network.
 
 ## Transferring files
 
@@ -56,6 +74,7 @@ python3 sw2xfer.py --host <switch-ip> upload /SourceFileOrFolder /DestinationPat
 python3 sw2xfer.py --host <switch-ip> download /SourceFileOrFolder /DestinationPath
 python3 sw2xfer.py --host <switch-ip> upload game.iso MyFolder /roms/ps2   # several sources, last path = destination
 python3 sw2xfer.py --host <switch-ip> cancel
+python3 sw2xfer.py --host <switch-ip> logout     # forget the saved password sign-in
 python3 sw2xfer.py --host <switch-ip> bench /path/test.bin --levels 1,4,8
 ```
 
@@ -95,9 +114,16 @@ python3 sw2xfer.py --host <switch-ip> mv /path/a /path/b
 | `PUT /ul/<path>?offset=N` | write the body at offset N (no truncation) |
 | `POST /api/mkdir?path=`, `/api/delete?path=[&recursive=1]`, `/api/rename?from=&to=` | rename/move never replaces |
 | `POST /api/copy?from=&to=` | background copy of a file or folder; progress at `GET /api/jobs` |
+| `POST /api/login` (header `X-SW2-Password`, URL-encoded) | returns a 12-hour token and sets the `sw2t` cookie |
+| `POST /api/logout` | clears the cookie |
 | `POST /api/cancel` | cancel all transfers and copies |
 | `GET /api/screen` | PNG of the Switch screen (from memory, nothing saved) |
 | `GET /sw2xfer.py`, `/favicon.png` | the client script, the app icon |
+
+With a password set, every request except the page, its icon, the client
+script, `info`, `login` and `logout` needs `Authorization: Bearer <token>` or
+the cookie, and gets 401 otherwise. Other websites cannot call the API (no
+cross-origin headers).
 
 A multi-connection upload is `create` followed by parallel `PUT`s at different
 offsets. Clients tag each file's requests with `?x=<id>`; after a cancel those
