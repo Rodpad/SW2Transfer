@@ -11,11 +11,8 @@ different byte range, which is much faster over Wi-Fi than a single stream.
 | **SW2Transfer, 8 connections (default)** | **51 MB/s** | **43 MB/s** |
 | SW2Transfer, 1 connection | 28 MB/s | 21 MB/s |
 | FTP (kaiHEN ftpd), 1 connection | 8.6 MB/s | 9.5 MB/s |
-| FTP (kaiHEN ftpd), download split over 4 connections | – | 26 MB/s |
 
-SW2Transfer is about 5 times faster than FTP. Splitting an FTP download helps
-up to a point, but kaiHEN ftpd stopped answering beyond 4 connections at once,
-and common FTP apps don't split uploads. Before these tests, the most I had
+SW2Transfer is about 5 times faster than FTP. Before these tests, the most I had
 ever seen over FTP was 8.8 MB/s. All measured with a Mac and the Switch 2 both
 on Wi-Fi, moving a 256 MB file (every transfer checked byte for byte).
 
