@@ -2,7 +2,7 @@
 """sw2xfer: multi-connection uploads and downloads for SW2Transfer on the Switch 2.
 
 Each file is split into chunks that N connections fetch or send in parallel
-(HTTP ranged GETs / PUTs at offsets), which is much faster over Wi-Fi than a
+(HTTP ranged GETs / PUTs at offsets), which is much faster than a
 single connection.
 
   sw2xfer.py upload /SourceFileOrFolder /DestinationPath     to the Switch
@@ -14,7 +14,7 @@ single connection.
   sw2xfer.py bench [/remote/file] [--size 512M]    upload + download speed test (file deleted after)
 
 Options: --host (or SW2XFER_HOST, default 192.168.1.168), --port 6967,
--n/--connections 8, --chunk 2M (best on Wi-Fi in tests: 8 connections, 2 MB chunks).
+-n/--connections 8, --chunk 2M (fastest in tests: 8 connections, 2 MB chunks).
 """
 import argparse
 import http.client

@@ -2,7 +2,7 @@
 
 Multi-connection file transfer server for the Switch 2 (hbmenu under kaiHEN).
 One file can be read or written by many TCP connections at once, each moving a
-different byte range, which is much faster over Wi-Fi than a single stream.
+different byte range, which is much faster than a single stream.
 
 ## Speed
 
@@ -43,7 +43,7 @@ everything with examples).
 - Click a file to download it, or tick several files and press Download.
   Downloads over 3.5 GB use one connection.
 - Connections (default 8) and chunk size (default 2 MB) were the fastest
-  combination in tests over Wi-Fi.
+  combination in tests.
 - Cancel all (web page), X twice (Switch) or `sw2xfer.py cancel` stops every
   transfer and copy, from any device; unfinished uploads and copies are
   deleted from the SD card.

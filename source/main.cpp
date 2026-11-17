@@ -21,7 +21,7 @@ Conn* makeHttpConn(int fd);
 
 static const char* DATA_DIR = "sdmc:/switch/sw2transfer";
 
-// Big TCP windows matter more than anything else for Wi-Fi throughput. Try
+// Big TCP windows matter more than anything else for throughput. Try
 // generous buffers first and fall back if the socket service refuses them.
 static std::string initSockets() {
   static const struct { u32 tx, rx, txMax, rxMax, eff; const char* name; } tries[] = {
