@@ -98,7 +98,7 @@ class Client:
             env = os.environ.get("SW2XFER_PASSWORD")
             for attempt in range(3):
                 try:
-                    pw = env if env is not None else getpass.getpass(f"Password for SW2Transfer at {self.key}: ")
+                    pw = env if env is not None else getpass.getpass("Enter your password to connect to SW2Transfer: ")
                 except EOFError:
                     raise RuntimeError("this Switch needs a password: run in a terminal, or set SW2XFER_PASSWORD")
                 c = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout)

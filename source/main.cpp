@@ -219,7 +219,7 @@ int main(int, char**) {
         int r2 = askPassword("Type the password again", "To make sure it is right.", again, kerr);
         if (r2 > 0 && again == pw) {
           bool ok = auth::setPassword(pw);
-          toast = ok ? "Password set: everyone signs in again" : "Could not save the password"; toastBad = !ok;
+          toast = ok ? "Password set" : "Could not save the password"; toastBad = !ok;
           if (ok) logf("password set");
         } else if (r2 > 0) { toast = "The passwords did not match; nothing changed"; toastBad = true; }
       }
