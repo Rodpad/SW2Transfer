@@ -31,12 +31,15 @@ app is open.
 | Y | Help |
 | + | Exit |
 
-## Password
+## Password protection
 
-By default there is no password: while the app is open, anyone on your
-network can read, change or delete files on the SD card. Press − on the
-Switch to set one with the on-screen keyboard (type it twice; leave it blank
-to remove it). After that:
+**Password protection is off by default.** Until you set a password, anyone
+on your network can read, change or delete files on the SD card while the app
+is open.
+
+To turn it on, press − on the Switch and type a password on the on-screen
+keyboard (twice, to confirm). To remove it, press − again and leave it blank.
+With a password set:
 
 - the web page asks for it and keeps you signed in on that browser for
   12 hours (Sign out ends it early);
