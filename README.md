@@ -4,6 +4,17 @@ Multi-connection file transfer server for the Switch 2 (hbmenu under kaiHEN).
 One file can be read or written by many TCP connections at once, each moving a
 different byte range, which is much faster over Wi-Fi than a single stream.
 
+## Speed
+
+| | Upload to Switch | Download from Switch |
+|---|---|---|
+| **SW2Transfer, 8 connections (default)** | **51 MB/s** | **43 MB/s** |
+| SW2Transfer, 1 connection | 28 MB/s | 21 MB/s |
+
+For comparison, the most I ever saw over FTP (kaiHEN ftpd) was 8.8 MB/s, so
+SW2Transfer is about 5 times faster. Measured with a Mac and the Switch 2
+both on Wi-Fi, moving a 256 MB file.
+
 Install: copy `sw2transfer.nro` to `sdmc:/switch/sw2transfer/` and launch it
 from hbmenu. The screen shows the console's address, live speed, and every
 file in flight with its connection count. The console stays awake while the
@@ -34,11 +45,6 @@ everything with examples).
 - Cancel all (web page), X twice (Switch) or `sw2xfer.py cancel` stops every
   transfer and copy, from any device; unfinished uploads and copies are
   deleted from the SD card.
-
-Measured speeds with the defaults (Mac and Switch 2 both on Wi-Fi, 256 MB
-file): about 51 MB/s uploading to the Switch and 43 MB/s downloading, against
-28 / 21 MB/s with a single connection. For comparison, the most I ever saw
-over FTP (kaiHEN ftpd) was 8.8 MB/s.
 
 Command line (Python 3; download it from `http://<switch-ip>:6967/sw2xfer.py`):
 
