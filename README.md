@@ -1,6 +1,7 @@
 # SW2Transfer
 
-Multi-connection file transfer server for the Switch 2 (hbmenu under kaiHEN).
+Multi-connection file transfer and file management server for the Switch 2
+(hbmenu under kaiHEN).
 One file can be read or written by many TCP connections at once, each moving a
 different byte range, which is much faster than a single stream.
 

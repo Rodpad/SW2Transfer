@@ -1,4 +1,4 @@
-// SW2Transfer: multi-connection file transfer server for the Switch 2
+// SW2Transfer: multi-connection file transfer and file management server for the Switch 2
 // (hbmenu under kaiHEN). HTTP (web page + sw2xfer client) on
 // 6967; one file can be read or written by many connections at once.
 #include <switch.h>
