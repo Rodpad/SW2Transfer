@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """sw2xfer: multi-connection uploads and downloads for SW2Transfer on the Switch 2.
 
-Each file is split into chunks that N connections fetch or send in parallel
-(HTTP ranged GETs / PUTs at offsets), which is much faster than a
-single connection.
+Up to 4 files move at once, one connection each; connections with no file of
+their own help a big file with its next chunks (HTTP ranged GETs / PUTs at
+offsets). So many files go four at a time, and a file on its own is split
+across all 8 connections.
 
   sw2xfer.py upload /SourceFileOrFolder /DestinationPath     to the Switch
   sw2xfer.py download /SourceFileOrFolder /DestinationPath   from the Switch
@@ -22,6 +23,7 @@ Options: --host <switch-ip> (shown on the Switch screen; or set SW2XFER_HOST), -
 -n/--connections 8, --chunk 2M (fastest in tests: 8 connections, 2 MB chunks).
 """
 import argparse
+import collections
 import getpass
 import http.client
 import json
@@ -313,47 +315,154 @@ def download_file(cl, remote, local, n, chunk):
     return size
 
 
-def put_small(cl, files, n):
-    """Files no bigger than one chunk go n at a time, one request each: with
-    many small files the per-file round trips, not bandwidth, are the cost."""
-    if not files:
+# How many files are in flight at once. From tests on the Switch 2: four files
+# on one connection each beat splitting every file across 8 connections at any
+# size; splitting only wins for a file on its own (or the last ones of a queue).
+FILES_AT_ONCE = 4
+
+
+class _File:
+    def __init__(self, src, dst, size):
+        self.src, self.dst, self.size = src, dst, size
+        self.xid = uuid.uuid4().hex  # tags this file's requests so Cancel all can stop them
+        self.fd = None
+        self.ready = False      # set up (created / opened) and ready for chunks
+        self.next_off = 0       # next chunk to hand out
+        self.left = size        # bytes not yet moved
+        self.busy = 0           # requests in flight
+
+
+def transfer_batch(cl, jobs, n, chunk, upload):
+    """Moves jobs [(src, dst, size)] with n connections: up to FILES_AT_ONCE
+    files in flight, each started by one connection; a connection with no file
+    to start helps one in flight with its next chunk. So a queue of files goes
+    four at a time, and a file on its own gets all n connections."""
+    if not jobs:
         return 0
-    total = sum(size for _, _, size in files)
-    prog = Progress(f"{len(files)} small file{'s' if len(files) > 1 else ''}", total)
+    total = sum(size for _, _, size in jobs)
+    label = os.path.basename(jobs[0][0].rstrip("/")) if len(jobs) == 1 else f"{len(jobs)} files"
+    prog = Progress(label, total)
+    pending = collections.deque(_File(*j) for j in jobs)
+    active = []
+    cv = threading.Condition()
+    errors = []
+    at_once = max(1, min(FILES_AT_ONCE, n))
 
-    def put(job):
-        local, remote, _ = job
-        with open(local, "rb") as f:
-            data = f.read()
-        xid = uuid.uuid4().hex
-        # no offset: the Switch creates (or replaces) the file in this one request
-        r, body = cl.request("PUT", f"/ul{q(remote)}?total={len(data)}&x={xid}", body=data,
-                             headers={"Content-Length": str(len(data)), "Content-Type": "application/octet-stream"})
-        if r.status != 200:
-            raise RuntimeError(f"PUT {remote}: HTTP {r.status} {body[:200]!r}")
-        prog.add(len(data))
-    run_parallel(n, files, put)
-    prog.show(final=True)
-    return total
+    def whole(f):  # files up to one chunk: one request
+        if upload:
+            with open(f.src, "rb") as fh:
+                data = fh.read()
+            # no offset: the Switch creates (or replaces) the file in this one request
+            r, body = cl.request("PUT", f"/ul{q(f.dst)}?total={len(data)}&x={f.xid}", body=data,
+                                 headers={"Content-Length": str(len(data)), "Content-Type": "application/octet-stream"})
+            if r.status != 200:
+                raise RuntimeError(f"PUT {f.dst}: HTTP {r.status} {body[:200]!r}")
+        else:
+            r, data = cl.request("GET", f"/dl{q(f.src)}?x={f.xid}")
+            if r.status != 200 or len(data) != f.size:
+                raise RuntimeError(f"GET {f.src}: HTTP {r.status}, {len(data)} bytes")
+            os.makedirs(os.path.dirname(os.path.abspath(f.dst)), exist_ok=True)
+            with open(f.dst, "wb") as fh:  # written only once complete, so no half files
+                fh.write(data)
+        prog.add(f.size)
 
+    def setup(f):  # bigger files: create / open, then chunks
+        if upload:
+            cl.api("POST", "/api/create", path=f.dst, size=f.size, x=f.xid)
+            f.fd = os.open(f.src, os.O_RDONLY | BINARY)
+        else:
+            os.makedirs(os.path.dirname(os.path.abspath(f.dst)), exist_ok=True)
+            f.fd = os.open(f.dst, os.O_RDWR | os.O_CREAT | os.O_TRUNC | BINARY, 0o644)
+            os.ftruncate(f.fd, f.size)
 
-def get_small(cl, files, n):
-    """Download files no bigger than one chunk, n at a time, one request each."""
-    if not files:
-        return 0
-    total = sum(size for _, _, size in files)
-    prog = Progress(f"{len(files)} small file{'s' if len(files) > 1 else ''}", total)
+    def move_chunk(f, off):
+        ln = min(chunk, f.size - off)
+        if upload:
+            data = read_at(f.src, f.fd, ln, off)
+            r, body = cl.request("PUT", f"/ul{q(f.dst)}?offset={off}&total={f.size}&x={f.xid}", body=data,
+                                 headers={"Content-Length": str(len(data)), "Content-Type": "application/octet-stream"})
+            if r.status != 200:
+                raise RuntimeError(f"PUT {f.dst}@{off}: HTTP {r.status} {body[:200]!r}")
+        else:
+            r, data = cl.request("GET", f"/dl{q(f.src)}?x={f.xid}", headers={"Range": f"bytes={off}-{off + ln - 1}"})
+            if r.status not in (200, 206) or len(data) != ln:
+                raise RuntimeError(f"GET {f.src}@{off}: HTTP {r.status}, {len(data)} bytes")
+            write_at(f.dst, f.fd, data, off)
+        prog.add(ln)
 
-    def get(job):
-        remote, local, size = job
-        r, data = cl.request("GET", f"/dl{q(remote)}?x={uuid.uuid4().hex}")
-        if r.status != 200 or len(data) != size:
-            raise RuntimeError(f"GET {remote}: HTTP {r.status}, {len(data)} bytes")
-        os.makedirs(os.path.dirname(os.path.abspath(local)), exist_ok=True)
-        with open(local, "wb") as f:  # written only once complete, so no half files
-            f.write(data)
-        prog.add(len(data))
-    run_parallel(n, files, get)
+    def close(f):
+        if f.fd is not None:
+            os.close(f.fd)
+            f.fd = None
+
+    def next_task():
+        with cv:
+            while not errors:
+                if pending and len(active) < at_once:
+                    f = pending.popleft()
+                    active.append(f)
+                    return ("start", f, 0)
+                helpable = [f for f in active if f.ready and f.next_off < f.size]
+                if helpable:
+                    f = max(helpable, key=lambda f: f.size - f.next_off)  # the one with most left
+                    off = f.next_off
+                    f.next_off += chunk
+                    f.busy += 1
+                    return ("chunk", f, off)
+                if not pending and not active:
+                    return None
+                cv.wait(0.5)
+            return None
+
+    def finish(f):  # with cv held
+        close(f)
+        active.remove(f)
+        cv.notify_all()
+
+    def worker():
+        while True:
+            t = next_task()
+            if t is None:
+                return
+            kind, f, off = t
+            try:
+                if kind == "start":
+                    if f.size <= chunk:
+                        whole(f)
+                        with cv:
+                            finish(f)
+                    else:
+                        setup(f)
+                        with cv:
+                            f.ready = True
+                            cv.notify_all()
+                else:
+                    move_chunk(f, off)
+                    with cv:
+                        f.busy -= 1
+                        f.left -= min(chunk, f.size - off)
+                        if f.left <= 0:
+                            finish(f)
+            except Exception as e:  # noqa: BLE001
+                with cv:
+                    errors.append(e)
+                    cv.notify_all()
+                return
+
+    ts = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, n))]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    if errors:
+        for f in active:
+            close(f)
+            if not upload and f.size > chunk and f.left > 0 and os.path.exists(f.dst):
+                try:
+                    os.unlink(f.dst)  # do not leave a half-downloaded file behind
+                except OSError:
+                    pass
+        raise errors[0]
     prog.show(final=True)
     return total
 
@@ -407,11 +516,7 @@ def cmd_put(cl, a):
         else:
             target = dest.rstrip("/") + "/" + os.path.basename(s) if into else dest
             jobs.append((s, target, os.path.getsize(s)))
-    # Small files several at once; each big file split across all connections.
-    total += put_small(cl, [j for j in jobs if j[2] <= a.chunk], a.connections)
-    for local, remote, size in jobs:
-        if size > a.chunk:
-            total += upload_file(cl, local, remote, a.connections, a.chunk)
+    total += transfer_batch(cl, jobs, a.connections, a.chunk, upload=True)
     el = time.time() - t0
     print(f"uploaded {human(total)} in {el:.1f} s = {total / max(el, 1e-6) / (1 << 20):.2f} MB/s with {a.connections} connections")
 
@@ -443,11 +548,7 @@ def cmd_get(cl, a):
             get_tree(s, os.path.join(dest, os.path.basename(s.rstrip("/")) or "sd"))
         else:
             jobs.append((s, os.path.join(dest, os.path.basename(s)) if into else dest, e["size"]))
-    # Small files several at once; each big file split across all connections.
-    total += get_small(cl, [j for j in jobs if j[2] <= a.chunk], a.connections)
-    for remote, local, size in jobs:
-        if size > a.chunk:
-            total += download_file(cl, remote, local, a.connections, a.chunk)
+    total += transfer_batch(cl, jobs, a.connections, a.chunk, upload=False)
     el = time.time() - t0
     print(f"downloaded {human(total)} in {el:.1f} s = {total / max(el, 1e-6) / (1 << 20):.2f} MB/s with {a.connections} connections")
 

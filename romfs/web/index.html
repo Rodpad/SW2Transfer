@@ -142,7 +142,7 @@ h2 { font-size: 14px; margin: 0; }
   <div class="drop" id="drop">Drop files or folders here to upload them into the current folder</div>
   <section class="card">
     <div class="bar"><h2>Transfers</h2><span class="spacer"></span><span class="meta" id="total"></span><button id="cancelAll" class="danger">Cancel all</button><button id="clear">Clear finished</button></div>
-    <div id="xfers"><div class="empty">Nothing yet. Each file is split into chunks that several connections move at once.</div></div>
+    <div id="xfers"><div class="empty">Nothing yet. Up to 4 files move at once; a file on its own is split across all connections.</div></div>
   </section>
 </main>
 <dialog id="loginDlg"><form class="help" id="loginForm">
@@ -164,7 +164,7 @@ h2 { font-size: 14px; margin: 0; }
     <li>Click folders to open them; the path at the top jumps back up. Uploads go into the folder you are in.</li>
     <li><b>Upload files</b> picks one or more files. <b>Upload folder</b> picks a whole folder, subfolders included.</li>
     <li>You can also drag files and folders (several at once) anywhere onto the page.</li>
-    <li>Files upload one after another, each split into chunks that several connections send at once.</li>
+    <li>Up to 4 files upload at once, one connection each; a big file on its own is split into chunks that all the connections send together.</li>
   </ol>
   <h3>Downloading and managing files</h3>
   <ul>
@@ -415,47 +415,79 @@ async function parallel(count, n, task) {
   if (failed) throw failed;
 }
 const settings = () => ({ n: +$("conns").value, chunk: +$("chunk").value * 1048576 });
+// Up to FILES_AT_ONCE files are in flight, one connection each; connections
+// with no file of their own help a big file with its next chunks. So many
+// files go four at a time and a file on its own gets every connection. (From
+// tests on the Switch 2: four files at once beat splitting each file at any
+// size; splitting only wins for a file on its own.)
+const FILES_AT_ONCE = 4;
 
-// Upload queue: files go one after another, each with all connections.
+// Retries a request (not after a cancel); signs in first when asked to.
+async function withRetry(fn) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await fn(); }
+    catch (e) {
+      if (e && e.login) { await ensureLogin(); attempt--; continue; }
+      if (isCancel(e) || attempt >= 3) throw e;
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+}
+
 const upQueue = []; let upBusy = false;
 function queueUpload(file, remote) { upQueue.push({ file, remote, x: addXfer(remote, file.size, true) }); pumpUploads(); }
 async function pumpUploads() {
   if (upBusy) return; upBusy = true;
   while (upQueue.length) {
-    // Small files (one chunk or less) go several at once, one request each:
-    // with many little files the per-file round trips are the cost.
-    if (upQueue[0].file.size <= settings().chunk) {
-      const batch = [];
-      while (upQueue.length && upQueue[0].file.size <= settings().chunk) batch.push(upQueue.shift());
-      const signal = abortCtl.signal;
-      try {
-        await parallel(batch.length, settings().n, async (i) => {
-          const { file, remote, x } = batch[i];
-          if (signal.aborted) throw new Cancelled();
-          x.t0 = performance.now();
-          // No offset: the Switch creates (or replaces) the file in this one request.
-          check(await fetch(`/ul${enc(remote)}?total=${file.size}&x=${newId()}`, { method: "PUT", body: file, signal }));
-          x.done = file.size; x.state = "done"; x.t1 = performance.now();
-        });
-      } catch (e) { for (const { x } of batch) if (x.state === "run") failXfer(x, e); }
-      refresh();
-      continue;
-    }
-    const { file, remote, x } = upQueue.shift();
-    x.t0 = performance.now();
-    const id = newId(), signal = abortCtl.signal;
-    try {
-      const { n, chunk } = settings();
-      check(await fetch("/api/create?" + new URLSearchParams({ path: remote, size: file.size, x: id }), { method: "POST", signal }));
-      const count = Math.ceil(file.size / chunk);
-      await parallel(count, n, async (i) => {
-        if (signal.aborted) throw new Cancelled();
-        const off = i * chunk, part = file.slice(off, Math.min(off + chunk, file.size));
-        check(await fetch(`/ul${enc(remote)}?offset=${off}&total=${file.size}&x=${id}`, { method: "PUT", body: part, signal }));
-        x.done += part.size;
-      });
-      x.state = "done"; x.t1 = performance.now();
-    } catch (e) { failXfer(x, e); }
+    const { n, chunk } = settings();
+    const signal = abortCtl.signal, active = [];
+    let waiters = [];
+    const wakeAll = () => { const w = waiters; waiters = []; w.forEach((f) => f()); };
+    const drop = (f) => { const i = active.indexOf(f); if (i >= 0) active.splice(i, 1); wakeAll(); };
+    const worker = async () => {
+      for (;;) {
+        if (signal.aborted) return;
+        let task = null;
+        if (upQueue.length && active.length < Math.min(FILES_AT_ONCE, n)) {
+          const it = upQueue.shift();
+          const f = { ...it, id: newId(), next: 0, left: it.file.size, ready: false, dead: false };
+          active.push(f); task = { f, start: true };
+        } else {
+          let best = null;
+          for (const f of active) if (f.ready && !f.dead && f.next < f.file.size && (!best || f.file.size - f.next > best.file.size - best.next)) best = f;
+          if (best) { task = { f: best, off: best.next }; best.next += chunk; }
+        }
+        if (!task) {
+          if (!upQueue.length && !active.length) return;
+          await new Promise((r) => { waiters.push(r); setTimeout(r, 500); });
+          continue;
+        }
+        const { f } = task, { file, remote, x } = f;
+        try {
+          if (task.start) {
+            x.t0 = performance.now();
+            if (file.size <= chunk) {
+              // No offset: the Switch creates (or replaces) the file in this one request.
+              await withRetry(async () => check(await fetch(`/ul${enc(remote)}?total=${file.size}&x=${f.id}`, { method: "PUT", body: file, signal })));
+              x.done = file.size; x.state = "done"; x.t1 = performance.now(); drop(f); refresh();
+            } else {
+              await withRetry(async () => check(await fetch("/api/create?" + new URLSearchParams({ path: remote, size: file.size, x: f.id }), { method: "POST", signal })));
+              f.ready = true; wakeAll();
+            }
+          } else {
+            const part = file.slice(task.off, Math.min(task.off + chunk, file.size));
+            await withRetry(async () => { if (signal.aborted) throw new Cancelled(); check(await fetch(`/ul${enc(remote)}?offset=${task.off}&total=${file.size}&x=${f.id}`, { method: "PUT", body: part, signal })); });
+            x.done += part.size; f.left -= part.size;
+            if (f.left <= 0 && !f.dead) { x.state = "done"; x.t1 = performance.now(); drop(f); refresh(); }
+          }
+        } catch (e) {
+          if (!f.dead) { f.dead = true; failXfer(x, e); drop(f); refresh(); }
+          if (isCancel(e)) return;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, n) }, worker));
+    for (const f of active) if (!f.dead) { f.dead = true; failXfer(f.x, new Cancelled()); }  // stopped by a cancel
     refresh();
   }
   upBusy = false;

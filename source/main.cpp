@@ -22,12 +22,16 @@ Conn* makeHttpConn(int fd);
 
 static const char* DATA_DIR = "sdmc:/switch/sw2transfer";
 
-// Big TCP windows matter more than anything else for throughput. Try
-// generous buffers first and fall back if the socket service refuses them.
+// Socket buffers. The service keeps one memory pool for all our sockets, sized
+// sb_efficiency x (send max + receive max); every open socket takes part of it
+// and when it runs out every socket on the console stalls (ftpd too). Tests on
+// the Switch 2: 1 MB buffers are as fast as 4 MB (46 MB/s on one connection,
+// 54 MB/s on 8), so small buffers with a high efficiency leave room for many
+// connections. net.cpp also caps open connections at MAX_CONNECTIONS.
 static std::string initSockets() {
   static const struct { u32 tx, rx, txMax, rxMax, eff; const char* name; } tries[] = {
-    {0x80000, 0x80000, 0x400000, 0x400000, 8, "large buffers (4 MB)"},
-    {0x40000, 0x40000, 0x200000, 0x200000, 4, "medium buffers (2 MB)"},
+    {0x40000, 0x40000, 0x100000, 0x100000, 32, "buffers up to 1 MB"},
+    {0x20000, 0x20000, 0x80000, 0x80000, 32, "buffers up to 512 KB"},
   };
   for (auto& t : tries) {
     SocketInitConfig c = *socketGetDefaultInitConfig();
@@ -253,7 +257,7 @@ int main(int, char**) {
       }
       graphLive = live;
     }
-    if (t - lastReap > 1.0) { vfs::reap(); lastReap = t; }
+    if (t - lastReap > 0.25) { vfs::reap(); lastReap = t; }
     if (t - ipCheck > 3.0) { ip = ipString(); ipCheck = t; }
 
     gfx::beginFrame(BG);
@@ -330,8 +334,12 @@ int main(int, char**) {
       }
       bool any = false;
       for (int i = 0; i < HIST; i++) if (histUp[i] + histDown[i] > 0) any = true;
-      if (any) gfx::text("peak " + mbs(peak) + (graphLive ? " \xC2\xB7 last 60 s" : " \xC2\xB7 last transfer (paused)"), gx + 12, gy + 8, 14, MUTED);
-      else gfx::text("The graph moves while files are transferring", gx + 12, gy + 8, 14, MUTED);
+      // Label over the bars, on a backing in the graph's background colour
+      // (slightly see-through) so it stays readable when bars are behind it.
+      std::string label = any ? "peak " + mbs(peak) + (graphLive ? " \xC2\xB7 last 60 s" : " \xC2\xB7 last transfer (paused)")
+                              : std::string("The graph moves while files are transferring");
+      gfx::rect(gx + 6, gy + 5, gfx::textWidth(label, 14) + 14, 24, rgb(0x111317, 0.85f), 6);
+      gfx::text(label, gx + 13, gy + 8, 14, MUTED);
     }
 
     // Transfers

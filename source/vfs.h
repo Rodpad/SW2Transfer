@@ -3,12 +3,14 @@
 // several threads on one handle, so several connections can fill or read one
 // file at different offsets at the same time.
 #pragma once
+#include <atomic>
 #include <stdint.h>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace vfs {
+
 
 struct File;  // opaque, shared between connections
 using FileRef = std::shared_ptr<File>;

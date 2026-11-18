@@ -66,6 +66,7 @@ std::vector<std::string> recentLog(int n) {
 // ------------------------------------------------------------------ stats
 std::atomic<int64_t> g_bytesUp{0}, g_bytesDown{0};
 std::atomic<int> g_connections{0};
+const int MAX_CONNECTIONS = 16;
 ScreenGrab g_screen;
 static std::mutex statMu;
 static std::vector<TransferRef> transfers;
@@ -402,7 +403,7 @@ int listenOn(int port, std::string& err) {
   int one = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
   sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons(port); a.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (bind(fd, (sockaddr*)&a, sizeof a) || listen(fd, 64)) { err = strerror(errno); close(fd); return -1; }
+  if (bind(fd, (sockaddr*)&a, sizeof a) || listen(fd, 4)) { err = strerror(errno); close(fd); return -1; }
   setNonBlocking(fd);
   return fd;
 }
@@ -430,10 +431,10 @@ static std::atomic<unsigned> rr{0};
 
 struct Listener : Conn {
   ConnFactory make;
-  int pollfds(pollfd* o) override { o[0] = {fd, POLLIN, 0}; return 1; }
+  int pollfds(pollfd* o) override { o[0] = {fd, (short)(g_connections < MAX_CONNECTIONS ? POLLIN : 0), 0}; return 1; }
   void handle(const pollfd* in, int) override {
     if (!(in[0].revents & POLLIN)) return;
-    for (int i = 0; i < 16; i++) {
+    while (g_connections < MAX_CONNECTIONS) {
       int c = accept(fd, nullptr, nullptr);
       if (c < 0) return;
       setNonBlocking(c); tuneSocket(c);
@@ -465,7 +466,7 @@ static void netLoop(NetThread* t, int index) {
       if (c->busy()) anyBusy = true;
     }
     int timeout = anyBusy ? 1 : 20;
-    if (pfds.empty()) { std::this_thread::sleep_for(std::chrono::milliseconds(timeout)); }
+    if (pfds.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
     else poll(pfds.data(), pfds.size(), timeout);
     size_t k = 0;
     for (size_t i = 0; i < t->conns.size(); i++) {

@@ -1,4 +1,8 @@
 #include "vfs.h"
+#include <atomic>
+#include <algorithm>
+#include <functional>
+#include <vector>
 #include <map>
 #include <mutex>
 #include <chrono>
@@ -17,6 +21,7 @@
 #endif
 
 namespace vfs {
+
 
 static double nowSec() {
   using namespace std::chrono;
@@ -265,7 +270,9 @@ struct Cached { FileRef ref; double lastUse; };
 static std::mutex mu;
 static std::map<std::string, Cached> writers;
 static std::multimap<std::string, Cached> readers;
-static const double LINGER = 3.0;
+static const double LINGER = 1.5;
+static const size_t MAX_OPEN = 24;  // see trimLocked
+static void trimLocked(size_t keep, double t, bool all);
 
 FileRef openWrite(const std::string& path, Trunc trunc, int64_t presize, std::string& err) {
   std::lock_guard<std::mutex> lk(mu);
@@ -289,6 +296,7 @@ FileRef openWrite(const std::string& path, Trunc trunc, int64_t presize, std::st
     it->second.lastUse = nowSec();
     return it->second.ref;
   }
+  trimLocked(MAX_OPEN - 1, nowSec(), false);
   auto f = std::make_shared<File>();
   f->path = path;
   if (!pOpen(*f, true, trunc != TRUNC_NO, presize, err)) return nullptr;
@@ -303,6 +311,7 @@ FileRef openRead(const std::string& path, std::string& err) {
   auto range = readers.equal_range(path);
   for (auto it = range.first; it != range.second; ++it)
     if (it->second.ref.use_count() == 1) { it->second.lastUse = nowSec(); return it->second.ref; }
+  trimLocked(MAX_OPEN - 1, nowSec(), false);
   auto f = std::make_shared<File>();
   f->path = path;
   if (!pOpen(*f, false, false, -1, err)) return nullptr;
@@ -310,19 +319,38 @@ FileRef openRead(const std::string& path, std::string& err) {
   return f;
 }
 
-void reap(bool all) {
-  std::lock_guard<std::mutex> lk(mu);
-  double t = nowSec();
+// Never more than MAX_OPEN handles in all: many small files finishing at once
+// otherwise leave hundreds open, and with that many the Switch stalls (its
+// networking included). Handles in use are never closed; idle ones go
+// oldest first. Call with mu held.
+static void trimLocked(size_t keep, double t, bool all) {
+  std::vector<std::pair<double, std::function<void()>>> idle;
   for (auto it = writers.begin(); it != writers.end();) {
     if (it->second.ref.use_count() > 1) { it->second.lastUse = t; ++it; }
     else if (all || t - it->second.lastUse > LINGER) it = writers.erase(it);
-    else ++it;
+    else { auto key = it->first; idle.push_back({it->second.lastUse, [key] { writers.erase(key); }}); ++it; }
   }
   for (auto it = readers.begin(); it != readers.end();) {
     if (it->second.ref.use_count() > 1) { it->second.lastUse = t; ++it; }
     else if (all || t - it->second.lastUse > LINGER) it = readers.erase(it);
-    else ++it;
+    else {
+      auto key = it->first; File* f = it->second.ref.get();
+      idle.push_back({it->second.lastUse, [key, f] {
+        auto r = readers.equal_range(key);
+        for (auto i = r.first; i != r.second; ++i) if (i->second.ref.get() == f) { readers.erase(i); break; }
+      }});
+      ++it;
+    }
   }
+  size_t total = writers.size() + readers.size();
+  if (total <= keep) return;
+  std::sort(idle.begin(), idle.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+  for (size_t i = 0; i < idle.size() && total > keep; i++, total--) idle[i].second();
+}
+
+void reap(bool all) {
+  std::lock_guard<std::mutex> lk(mu);
+  trimLocked(MAX_OPEN, nowSec(), all);
 }
 
 bool inUse(const std::string& path) {

@@ -17,6 +17,20 @@ SW2Transfer is about 5 times faster than FTP. Before these tests, the most I had
 ever seen over FTP was 8.8 MB/s. All measured with a Mac and the Switch 2 both
 on Wi-Fi, moving a 256 MB file (every transfer checked byte for byte).
 
+Many small files (100 typical emulator files: saves, configs, box art and ROMs,
+21.6 MB in all):
+
+| | Time | Speed |
+|---|---|---|
+| **SW2Transfer 1.4.3** | **0.9 s** | **23 MB/s** |
+| SW2Transfer 1.4.0 | 3.0 s | 7.2 MB/s |
+| FTP (kaiHEN ftpd) | 3.9 s | 5.5 MB/s |
+
+Up to 4 files move at once, one connection each; connections with no file of
+their own help a big file with its next chunks, so a file on its own still uses
+all 8 connections. In tests, 4 files at once beat splitting each file across 8
+connections at every size from 256 KB to 64 MB.
+
 ## Install
 
 Copy `sw2transfer.nro` to `sdmc:/switch/sw2transfer/` and launch it
@@ -65,8 +79,9 @@ everything with examples).
 - Click a file to download it, or tick several files and press Download.
   Downloads over 3.5 GB use one connection.
 - Connections (default 8) and chunk size (default 2 MB) were the fastest
-  combination in tests. Files up to one chunk in size go several at once, one
-  request each, so folders of many small files are quick too.
+  combination in tests. Up to 4 files upload at once, one connection each
+  (files up to one chunk in one request), so folders of many small files are
+  quick too; a big file on its own gets every connection.
 - Cancel all (web page), X twice (Switch) or `sw2xfer.py cancel` stops every
   transfer and copy, from any device; unfinished uploads and copies are
   deleted from the SD card.
@@ -139,8 +154,17 @@ The Switch socket service allows only a few concurrent IPC sessions (libnx caps
 it at 16, and a blocked call holds one), so there is no thread per connection.
 Four network threads poll non-blocking sockets. A disk pool of four threads
 reads and writes the SD in 1 MB chunks, triple-buffered per connection. All
-writers of one file share one `FsFile` handle and use positional writes. TCP
-buffers are raised to 4 MB, with a fallback if the socket service refuses.
+writers of one file share one `FsFile` handle and use positional writes. Socket
+buffers are 1 MB.
+
+The socket service keeps one memory pool for all of an app's sockets, sized
+`sb_efficiency` x (send max + receive max). Every open socket takes part of it,
+and when it runs out every socket on the console stalls, ftpd included, until
+the app quits. With the old 4 MB buffers that happened at about 12 connections.
+1 MB buffers are just as fast (46 MB/s on one connection, 54 MB/s on 8), so the
+pool is set for many small sockets (efficiency 32), and the server never has
+more than 16 connections open (more wait in a short listen queue), 8 transfers
+moving data, or 24 files open.
 
 Never use `std::thread::detach()` here: on the Switch, `pthread_detach` calls a
 weak `__syscall_thread_detach` that libnx does not provide, so it jumps to

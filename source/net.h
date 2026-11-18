@@ -21,6 +21,7 @@
 double nowSec();
 void logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 std::vector<std::string> recentLog(int n);
+
 void setLogFile(const char* path);
 
 // ------------------------------------------------------------------ stats
@@ -52,6 +53,10 @@ extern std::atomic<int> g_cancelEpoch;
 void cancelAll(const char* by);
 bool xferIdAllowed(const std::string& id);  // false = cancelled
 extern std::atomic<int> g_connections;
+// Open client connections are capped: every socket takes part of the Switch's
+// socket memory pool, and past roughly the pool's size every socket on the
+// console stalls. Over the cap, new connections wait in a short listen queue.
+extern const int MAX_CONNECTIONS;
 
 // ------------------------------------------------------------------ disk pool
 struct Job {

@@ -8,6 +8,8 @@
 //   POST /api/create?path=&size=   create/replace a file, preallocated
 //   PUT  /ul/<path>?offset=N       write the body at offset N (no truncation)
 //   POST /api/mkdir?path=   /api/delete?path=[&recursive=1]   /api/rename?from=&to=
+//   GET  /api/speed?bytes=N        N zero bytes from memory (network test, no SD access)
+//   PUT  /api/speed                body read and dropped (network test, nothing written)
 //
 // A multi-connection upload is create + many PUTs at different offsets on
 // separate connections; a download is many ranged GETs. Keep-alive is used.
@@ -76,10 +78,25 @@ std::string jsonResponse(int code, const std::string& body, bool keepAlive) {
   return headString(code, "application/json", (int64_t)body.size(), keepAlive, "") + body;
 }
 
+// At most this many uploads/downloads move data at once, across all clients.
+// Each one can grow its socket buffers to 4 MB, and the socket memory pool
+// (main.cpp) holds 8 of those; past that the Switch's network service stalls
+// every socket. Requests over the limit wait, unread, for a free slot.
+const int MAX_TRANSFERS = 8;
+std::atomic<int> g_transferSlots{0};
+bool takeTransferSlot() {
+  int n = g_transferSlots.load();
+  while (n < MAX_TRANSFERS)
+    if (g_transferSlots.compare_exchange_weak(n, n + 1)) return true;
+  return false;
+}
+
 struct HttpConn : Conn {
   std::string in, out;
-  enum State { HEADERS, BODY_PUMP, SENDING, WAIT_JOB, DISCARD } state = HEADERS;
-  int64_t discardLeft = 0;  // body bytes still to read and drop (refused upload)
+  enum State { HEADERS, BODY_PUMP, SENDING, WAIT_JOB, DISCARD, SINK, SPEED_SEND, PARKED } state = HEADERS;
+  bool hasSlot = false;  // holds one of the MAX_TRANSFERS slots
+  int64_t discardLeft = 0;  // body bytes still to read and drop (refused upload, or PUT /api/speed)
+  int64_t speedLen = 0, speedLeft = 0;  // /api/speed byte counts
   Pump pump;
   bool keepAlive = true, closeAfter = false;
   std::string method, target, reqPath;
@@ -90,11 +107,15 @@ struct HttpConn : Conn {
   int epoch = 0;  // g_cancelEpoch when the current transfer started
 
   HttpConn(int f) { fd = f; lastActivity = nowSec(); }
+  // However the connection ends, its transfer is finished (or the Switch's
+  // transfers panel keeps showing it as running).
+  ~HttpConn() { pump.reset(); releaseSlot(); }
+  void releaseSlot() { if (hasSlot) { hasSlot = false; g_transferSlots--; } }
 
   int pollfds(pollfd* o) override {
     short ev = 0;
-    if (state == HEADERS || state == DISCARD) ev |= POLLIN;
-    if (!out.empty()) ev |= POLLOUT;
+    if (state == HEADERS || state == DISCARD || state == SINK) ev |= POLLIN;
+    if (!out.empty() || state == SPEED_SEND) ev |= POLLOUT;
     else if (state == SENDING || state == BODY_PUMP) ev |= pump.events();
     o[0] = {fd, ev, 0};
     return 1;
@@ -104,14 +125,15 @@ struct HttpConn : Conn {
   void handle(const pollfd* p, int) override {
     short r = p[0].revents;
     if (r) lastActivity = nowSec();
-    if (r & POLLNVAL) { dead = true; return; }
+    if (r & POLLNVAL) { fail("socket closed"); return; }
     if (r & POLLOUT) {
       if (!out.empty() && !sendAll(fd, out)) { fail("connection lost"); return; }
       if (out.empty() && pump.active()) pump.onWritable(fd);
+      if (out.empty() && state == SPEED_SEND) sendZeros();
     }
     if (r & POLLIN) {
       if (state == HEADERS) readHeaders();
-      else if (state == DISCARD) discard();
+      else if (state == DISCARD || state == SINK) discard();
       else if (state == BODY_PUMP) pump.onReadable(fd);
     }
     if ((r & (POLLERR | POLLHUP)) && !(r & POLLIN)) fail("connection closed");
@@ -126,6 +148,7 @@ struct HttpConn : Conn {
 
   void tick() override {
     if (dead) return;
+    if (state == PARKED) { route(); if (dead || state == PARKED) return; }  // waiting for a transfer slot
     if (state == WAIT_JOB && job->done.load(std::memory_order_acquire)) {
       out += *jobOut; job.reset(); jobOut.reset();
       finishRequest();
@@ -144,10 +167,12 @@ struct HttpConn : Conn {
     }
     if (!out.empty() && !sendAll(fd, out)) { fail("connection lost"); return; }
     if (state == HEADERS && out.empty() && closeAfter) { dead = true; return; }
-    if (state == HEADERS && in.empty() && nowSec() - lastActivity > 120) dead = true;  // idle keep-alive
+    // Idle keep-alive: closed after 2 minutes, or 2 seconds when the connection cap is reached (others are waiting).
+    if (state == HEADERS && in.empty() && nowSec() - lastActivity > (g_connections >= MAX_CONNECTIONS ? 2 : 120)) dead = true;
   }
 
   void finishRequest() {
+    releaseSlot();
     if (state == SENDING || state == BODY_PUMP) pump.reset();
     state = HEADERS;
     if (!keepAlive) closeAfter = true;
@@ -158,9 +183,22 @@ struct HttpConn : Conn {
     char b[65536];
     while (discardLeft > 0) {
       ssize_t n = recv(fd, b, (size_t)std::min<int64_t>(sizeof b, discardLeft), 0);
-      if (n > 0) { discardLeft -= n; continue; }
+      if (n > 0) { discardLeft -= n; if (state == SINK) g_bytesUp += n; continue; }
       if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) { dead = true; return; }
       return;
+    }
+    if (state == SINK) respond(200, "application/json", "{\"ok\":true,\"received\":" + std::to_string(speedLen) + "}");
+    finishRequest();
+  }
+
+  // GET /api/speed: zeros straight from memory.
+  void sendZeros() {
+    static const char zeros[1 << 20] = {};
+    while (speedLeft > 0) {
+      ssize_t n = send(fd, zeros, (size_t)std::min<int64_t>(sizeof zeros, speedLeft), 0);
+      if (n > 0) { speedLeft -= n; g_bytesDown += n; continue; }
+      if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return;
+      dead = true; return;
     }
     finishRequest();
   }
@@ -313,12 +351,35 @@ struct HttpConn : Conn {
     }
     // Requests of a transfer that was cancelled are refused, so clients stop.
     if (!xferIdAllowed(q("x"))) return refuse(410, "{\"ok\":false,\"error\":\"cancelled\"}");
+    bool bulk = (method == "GET" && reqPath.compare(0, 4, "/dl/") == 0) || (method == "PUT" && reqPath.compare(0, 4, "/ul/") == 0) ||
+                reqPath == "/api/speed";
+    if (bulk && !hasSlot) {
+      if (!takeTransferSlot()) { state = PARKED; return; }
+      hasSlot = true;
+      if (state == PARKED) state = HEADERS;
+    }
     if (method == "GET" && (reqPath == "/" || reqPath == "/index.html")) {
       respond(200, "text/html; charset=utf-8", g_webPage); return finishRequest();
     }
     if (method == "GET" && (reqPath == "/favicon.png" || reqPath == "/favicon.ico")) {
       respond(g_favicon.empty() ? 404 : 200, "image/png", g_favicon, "");
       return finishRequest();
+    }
+    if (reqPath == "/api/speed" && (method == "GET" || method == "PUT")) {  // network test: no SD access
+      if (method == "GET") {
+        speedLeft = std::max<int64_t>(0, std::min<int64_t>(atoll(q("bytes").c_str()), (int64_t)8 << 30));
+        respondHead(200, "application/octet-stream", speedLeft);
+        if (speedLeft == 0) return finishRequest();
+        state = SPEED_SEND;
+        return;
+      }
+      speedLen = std::max<int64_t>(0, atoll(header("content-length").c_str()));
+      int64_t have = std::min<int64_t>((int64_t)in.size(), speedLen);
+      in.erase(0, have);
+      g_bytesUp += have;
+      discardLeft = speedLen - have;
+      state = SINK;
+      return discard();
     }
     if (method == "GET" && reqPath == "/sw2xfer.py") {
       respond(200, "text/x-python; charset=utf-8", g_clientScript, "Content-Disposition: attachment; filename=\"sw2xfer.py\"\r\n");
