@@ -77,12 +77,13 @@ TransferRef transferAttach(const std::string& path, bool upload, int64_t total) 
     // A file being moved again after a pause (a new run) starts fresh.
     if (x->path == path && x->upload == upload && (x->conns > 0 || t - x->lastActive < 2.0)) {
       x->conns++; x->lastActive = t;
+      if (x->conns > x->peakConns) x->peakConns = x->conns.load();
       if (total >= 0) x->total = total;
       return x;
     }
   }
   auto x = std::make_shared<Transfer>();
-  x->path = path; x->upload = upload; x->total = total; x->conns = 1; x->started = x->lastActive = t;
+  x->path = path; x->upload = upload; x->total = total; x->conns = 1; x->peakConns = 1; x->started = x->lastActive = t;
   transfers.push_back(x);
   return x;
 }

@@ -351,7 +351,7 @@ int main(int, char**) {
       auto col = cancelled ? ACCENT : x->upload ? UP : DOWN;
       std::string name = gfx::ellipsize(std::string(x->copy ? "Copy to  " : x->upload ? "Upload  " : "Download  ") + x->path, W - 2 * M - 620, 18);
       gfx::text(name, M + 24, ry, 18, live ? TEXT : MUTED);
-      snprintf(line, sizeof line, "%d conn  %s%s%s  %s", (int)x->conns, human((double)b).c_str(), tot > 0 ? " / " : "", tot > 0 ? human((double)tot).c_str() : "", live ? mbs(sp).c_str() : cancelled ? "Cancelled" : "done");
+      snprintf(line, sizeof line, "%d conn  %s%s%s  %s", live ? (int)x->conns : (int)x->peakConns, human((double)b).c_str(), tot > 0 ? " / " : "", tot > 0 ? human((double)tot).c_str() : "", live ? mbs(sp).c_str() : cancelled ? "Cancelled" : "done");
       gfx::text(line, W - M - 24 - gfx::textWidth(line, 18, gfx::MONO), ry, 18, live || cancelled ? col : MUTED, gfx::MONO);
       float frac = tot > 0 ? std::min(1.0, (double)b / tot) : (live || cancelled ? 0 : 1);
       gfx::rect(M + 24, ry + 28, W - 2 * M - 48, 6, BARBG, 3);

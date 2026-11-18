@@ -313,21 +313,72 @@ def download_file(cl, remote, local, n, chunk):
     return size
 
 
+def put_small(cl, files, n):
+    """Files no bigger than one chunk go n at a time, one request each: with
+    many small files the per-file round trips, not bandwidth, are the cost."""
+    if not files:
+        return 0
+    total = sum(size for _, _, size in files)
+    prog = Progress(f"{len(files)} small file{'s' if len(files) > 1 else ''}", total)
+
+    def put(job):
+        local, remote, _ = job
+        with open(local, "rb") as f:
+            data = f.read()
+        xid = uuid.uuid4().hex
+        # no offset: the Switch creates (or replaces) the file in this one request
+        r, body = cl.request("PUT", f"/ul{q(remote)}?total={len(data)}&x={xid}", body=data,
+                             headers={"Content-Length": str(len(data)), "Content-Type": "application/octet-stream"})
+        if r.status != 200:
+            raise RuntimeError(f"PUT {remote}: HTTP {r.status} {body[:200]!r}")
+        prog.add(len(data))
+    run_parallel(n, files, put)
+    prog.show(final=True)
+    return total
+
+
+def get_small(cl, files, n):
+    """Download files no bigger than one chunk, n at a time, one request each."""
+    if not files:
+        return 0
+    total = sum(size for _, _, size in files)
+    prog = Progress(f"{len(files)} small file{'s' if len(files) > 1 else ''}", total)
+
+    def get(job):
+        remote, local, size = job
+        r, data = cl.request("GET", f"/dl{q(remote)}?x={uuid.uuid4().hex}")
+        if r.status != 200 or len(data) != size:
+            raise RuntimeError(f"GET {remote}: HTTP {r.status}, {len(data)} bytes")
+        os.makedirs(os.path.dirname(os.path.abspath(local)), exist_ok=True)
+        with open(local, "wb") as f:  # written only once complete, so no half files
+            f.write(data)
+        prog.add(len(data))
+    run_parallel(n, files, get)
+    prog.show(final=True)
+    return total
+
+
 def remote_list(cl, path):
     return cl.api("GET", "/api/list", path=path)["entries"]
 
 
-def remote_kind(cl, path):
+def remote_entry(cl, path):
+    """The listing entry for path ({"name", "dir", "size", ...}), or None."""
     parent, name = os.path.split(path.rstrip("/")) if path.rstrip("/") else ("/", "")
     if not name:
-        return "dir"
+        return {"name": "", "dir": True, "size": 0}
     try:
         for e in remote_list(cl, parent or "/"):
             if e["name"] == name:
-                return "dir" if e["dir"] else "file"
+                return e
     except RuntimeError:
         pass
     return None
+
+
+def remote_kind(cl, path):
+    e = remote_entry(cl, path)
+    return None if e is None else ("dir" if e["dir"] else "file")
 
 
 def cmd_put(cl, a):
@@ -340,6 +391,7 @@ def cmd_put(cl, a):
     into = len(srcs) > 1 or dest.endswith("/") or any(os.path.isdir(x) for x in srcs) or remote_kind(cl, dest) == "dir"
     if into:
         cl.api("POST", "/api/mkdir", path=dest.rstrip("/") or "/")
+    jobs = []  # (local, remote, size)
     for s in srcs:
         s = s.rstrip("/\\") or s
         if os.path.isdir(s):
@@ -351,10 +403,15 @@ def cmd_put(cl, a):
                 for f in sorted(files):
                     if f.startswith("._") or f == ".DS_Store":
                         continue
-                    total += upload_file(cl, os.path.join(root, f), rdir + "/" + f, a.connections, a.chunk)
+                    jobs.append((os.path.join(root, f), rdir + "/" + f, os.path.getsize(os.path.join(root, f))))
         else:
             target = dest.rstrip("/") + "/" + os.path.basename(s) if into else dest
-            total += upload_file(cl, s, target, a.connections, a.chunk)
+            jobs.append((s, target, os.path.getsize(s)))
+    # Small files several at once; each big file split across all connections.
+    total += put_small(cl, [j for j in jobs if j[2] <= a.chunk], a.connections)
+    for local, remote, size in jobs:
+        if size > a.chunk:
+            total += upload_file(cl, local, remote, a.connections, a.chunk)
     el = time.time() - t0
     print(f"uploaded {human(total)} in {el:.1f} s = {total / max(el, 1e-6) / (1 << 20):.2f} MB/s with {a.connections} connections")
 
@@ -367,25 +424,30 @@ def cmd_get(cl, a):
     if into:
         os.makedirs(dest, exist_ok=True)
 
+    jobs = []  # (remote, local, size)
+
     def get_tree(rpath, ldir):
-        nonlocal total
         os.makedirs(ldir, exist_ok=True)
         for e in remote_list(cl, rpath):
             rp = rpath.rstrip("/") + "/" + e["name"]
             if e["dir"]:
                 get_tree(rp, os.path.join(ldir, e["name"]))
             else:
-                total += download_file(cl, rp, os.path.join(ldir, e["name"]), a.connections, a.chunk)
+                jobs.append((rp, os.path.join(ldir, e["name"]), e["size"]))
 
     for s in srcs:
-        kind = remote_kind(cl, s)
-        if kind == "dir":
-            get_tree(s, os.path.join(dest, os.path.basename(s.rstrip("/")) or "sd"))
-        elif kind == "file":
-            target = os.path.join(dest, os.path.basename(s)) if into else dest
-            total += download_file(cl, s, target, a.connections, a.chunk)
-        else:
+        e = remote_entry(cl, s)
+        if e is None:
             sys.exit(f"download: {s} not found on the Switch")
+        if e["dir"]:
+            get_tree(s, os.path.join(dest, os.path.basename(s.rstrip("/")) or "sd"))
+        else:
+            jobs.append((s, os.path.join(dest, os.path.basename(s)) if into else dest, e["size"]))
+    # Small files several at once; each big file split across all connections.
+    total += get_small(cl, [j for j in jobs if j[2] <= a.chunk], a.connections)
+    for remote, local, size in jobs:
+        if size > a.chunk:
+            total += download_file(cl, remote, local, a.connections, a.chunk)
     el = time.time() - t0
     print(f"downloaded {human(total)} in {el:.1f} s = {total / max(el, 1e-6) / (1 << 20):.2f} MB/s with {a.connections} connections")
 

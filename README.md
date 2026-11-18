@@ -65,7 +65,8 @@ everything with examples).
 - Click a file to download it, or tick several files and press Download.
   Downloads over 3.5 GB use one connection.
 - Connections (default 8) and chunk size (default 2 MB) were the fastest
-  combination in tests.
+  combination in tests. Files up to one chunk in size go several at once, one
+  request each, so folders of many small files are quick too.
 - Cancel all (web page), X twice (Switch) or `sw2xfer.py cancel` stops every
   transfer and copy, from any device; unfinished uploads and copies are
   deleted from the SD card.

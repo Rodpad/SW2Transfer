@@ -422,6 +422,25 @@ function queueUpload(file, remote) { upQueue.push({ file, remote, x: addXfer(rem
 async function pumpUploads() {
   if (upBusy) return; upBusy = true;
   while (upQueue.length) {
+    // Small files (one chunk or less) go several at once, one request each:
+    // with many little files the per-file round trips are the cost.
+    if (upQueue[0].file.size <= settings().chunk) {
+      const batch = [];
+      while (upQueue.length && upQueue[0].file.size <= settings().chunk) batch.push(upQueue.shift());
+      const signal = abortCtl.signal;
+      try {
+        await parallel(batch.length, settings().n, async (i) => {
+          const { file, remote, x } = batch[i];
+          if (signal.aborted) throw new Cancelled();
+          x.t0 = performance.now();
+          // No offset: the Switch creates (or replaces) the file in this one request.
+          check(await fetch(`/ul${enc(remote)}?total=${file.size}&x=${newId()}`, { method: "PUT", body: file, signal }));
+          x.done = file.size; x.state = "done"; x.t1 = performance.now();
+        });
+      } catch (e) { for (const { x } of batch) if (x.state === "run") failXfer(x, e); }
+      refresh();
+      continue;
+    }
     const { file, remote, x } = upQueue.shift();
     x.t0 = performance.now();
     const id = newId(), signal = abortCtl.signal;

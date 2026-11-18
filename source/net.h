@@ -33,6 +33,7 @@ struct Transfer {
   std::atomic<int64_t> bytes{0};
   std::atomic<int64_t> total{-1};   // whole file size when known
   std::atomic<int> conns{0};
+  std::atomic<int> peakConns{0};  // most connections at once (shown once finished)
   double started = 0, lastActive = 0;
   // UI-side smoothing
   int64_t uiLastBytes = 0; double uiSpeed = 0;
