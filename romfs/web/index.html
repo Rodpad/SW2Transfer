@@ -111,7 +111,7 @@ h2 { font-size: 14px; margin: 0; }
   <span class="meta" id="free"></span>
   <span class="spacer"></span>
   <label class="opt">Connections
-    <select id="conns"><option>1</option><option>2</option><option>4</option><option value="8" selected>8 (default)</option><option>12</option><option>16</option></select></label>
+    <select id="conns"><option>1</option><option>2</option><option>4</option><option value="8" selected>8 (default)</option></select></label>
   <label class="opt">Chunk
     <select id="chunk"><option value="1">1 MB</option><option value="2" selected>2 MB (default)</option><option value="4">4 MB</option><option value="8">8 MB</option><option value="16">16 MB</option></select></label>
 </header>
@@ -189,7 +189,7 @@ h2 { font-size: 14px; margin: 0; }
 const $ = (id) => document.getElementById(id);
 let cwd = "/";
 try { cwd = localStorage.getItem("sw2t.cwd") || "/"; } catch (e) {}
-try { const c = localStorage.getItem("sw2t.conns"); if (c) $("conns").value = c; const k = localStorage.getItem("sw2t.chunk"); if (k && [...$("chunk").options].some((o) => o.value === k)) $("chunk").value = k; } catch (e) {}
+try { const c = localStorage.getItem("sw2t.conns"); if (c && [...$("conns").options].some((o) => o.value === c)) $("conns").value = c; const k = localStorage.getItem("sw2t.chunk"); if (k && [...$("chunk").options].some((o) => o.value === k)) $("chunk").value = k; } catch (e) {}
 $("conns").onchange = () => { try { localStorage.setItem("sw2t.conns", $("conns").value); } catch (e) {} };
 $("chunk").onchange = () => { try { localStorage.setItem("sw2t.chunk", $("chunk").value); } catch (e) {} };
 
