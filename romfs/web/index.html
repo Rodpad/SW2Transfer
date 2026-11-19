@@ -181,7 +181,7 @@ h2 { font-size: 14px; margin: 0; }
     <li><b>Password:</b> press &minus; on the Switch to set one. This page then asks for it, and keeps you signed in for 12 hours; <b>Sign out</b> ends it early.</li>
     <li><b>Cancel all</b> (under Transfers) stops every transfer and copy, from any device. Unfinished uploads and copies are deleted from the Switch. On the Switch, press X twice; in a terminal, <code>sw2xfer.py cancel</code>.</li>
     <li>Copies run on the Switch and show their progress under Transfers. A copy into the same folder is named &ldquo;name copy&rdquo;. Moves are instant and never replace an existing item.</li>
-    <li><b>Download selected</b> saves one ticked file as it is; several items, or folders (with everything in them), come as one <code>transfer.zip</code>. A file's own <b>Download</b> button always saves just that file. A zip is limited to 1.5 GB, since the browser builds it in memory; use the command-line client for more.</li>
+    <li><b>Download selected</b> saves one ticked file as it is; several items, or folders (with everything in them), come as one <code>transfer.zip</code>. A file's own <b>Download</b> button always saves just that file. A zip is limited to 1.5 GB, since the browser builds it in memory; past that the page offers to download the files one by one instead (into Downloads, without their folders). The command-line client keeps folders and has no limit.</li>
   </ul>
   <h3>Speed settings</h3>
   <p><b>Connections</b> is how many connections share each file; <b>Chunk</b> is the piece each one moves at a time. 8 connections with 2 MB chunks were fastest in tests; more than 8 tends to slow downloads.</p>
@@ -380,6 +380,7 @@ function paint() {
     el.querySelector(".prog > div").style.width = (x.size ? 100 * x.done / x.size : 100) + "%";
     if (x.state === "queued") { s.textContent = "waiting"; continue; }
     if (x.state === "run") { if (x.up !== "copy") speed += mbs; s.textContent = `${human(x.done)} / ${human(x.size)} · ${mbs.toFixed(1)} MB/s`; }
+    else if (x.state === "browser") { el.classList.add("done"); s.textContent = `${human(x.size)} passed to your browser's downloads`; }
     else if (x.state === "skipped") { el.classList.add("done"); s.textContent = "Skipped: already on the Switch"; }
     else if (x.state === "done") { el.classList.add("done"); s.textContent = `${human(x.size)} in ${sec.toFixed(1)} s · ${mbs.toFixed(1)} MB/s`; }
     else { el.classList.add("failed"); s.textContent = x.error || "Failed"; }
@@ -660,7 +661,22 @@ async function downloadZip(items) {
     for (const it of items) if (it.dir) await walk(it.path, it.name); else files.push({ path: it.path, name: it.name, size: it.size, mtime: it.modified });
   } catch (e) { alert("Could not list the folders: " + e.message); return; }
   const total = files.reduce((t, f) => t + f.size, 0);
-  if (total > ZIP_MAX) { alert(`That is ${human(total)}: too much to put together in the browser (transfer.zip is limited to 1.5 GB). Select less, or use the command-line client.`); return; }
+  if (total > ZIP_MAX) {
+    // Too big for a zip in memory: hand each file to the browser's own downloads
+    // (straight to disk, any size), one after another.
+    if (!confirm(`That is ${human(total)} in ${files.length} file${files.length === 1 ? "" : "s"}: too much for one transfer.zip (the limit is 1.5 GB).\n\nDownload the files one by one into your Downloads folder instead? Folders are not kept, and your browser may ask to allow several downloads. (The command-line client keeps folders.)`)) return;
+    const x = addXfer(`${files.length} file${files.length === 1 ? "" : "s"}, one by one`, total, false);
+    const signal = abortCtl.signal;
+    for (const f of files) {
+      if (signal.aborted) { failXfer(x, new Cancelled()); return; }
+      const a = document.createElement("a"); a.href = `/dl${enc(f.path)}?dl=1`; a.download = f.path.split("/").pop();
+      document.body.append(a); a.click(); a.remove();
+      x.done += f.size;
+      await new Promise((r) => setTimeout(r, 400));  // browsers drop downloads started too close together
+    }
+    x.state = "browser"; x.t1 = performance.now();
+    return;
+  }
   if (files.length + folders.length > 65535) { alert("That is too many files for one zip. Select less, or use the command-line client."); return; }
   const x = addXfer("transfer.zip", total, false);
   const signal = abortCtl.signal;

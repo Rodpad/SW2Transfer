@@ -80,7 +80,9 @@ everything with examples).
   ticks it. Download selected saves one ticked file as it is, or several items
   (folders with everything in them) as one `transfer.zip`. Browser downloads
   are put together in memory: a single file over 3.5 GB uses one connection
-  instead, and a zip is limited to 1.5 GB (use the command line for more).
+  instead. A zip is limited to 1.5 GB; past that the page offers to download
+  the files one by one (into Downloads, without their folders). The command
+  line keeps folders and has no limit.
 - Connections (default 8) and chunk size (default 2 MB) were the fastest
   combination in tests. Up to 4 files upload at once, one connection each
   (files up to one chunk in one request), so folders of many small files are
