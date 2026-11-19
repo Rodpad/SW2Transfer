@@ -20,7 +20,7 @@ scripts, set SW2XFER_PASSWORD instead.
 
 If a file is already at the destination you are asked once, when its turn
 comes: Overwrite all, Skip all or Cancel transfer (which removes the files it
-had started). For scripts: --overwrite or --skip-existing.
+had started). For scripts: --overwrite-existing or --skip-existing.
   sw2xfer.py bench [/remote/file] [--size 512M]    upload + download speed test (file deleted after)
 
 Options: --host <switch-ip> (shown on the Switch screen; or set SW2XFER_HOST), --port 6967,
@@ -369,7 +369,7 @@ def transfer_batch(cl, jobs, n, chunk, upload, on_exists=None):
                 return policy[0]
             where = "on the Switch" if upload else "here"
             if not sys.stdin.isatty():
-                raise RuntimeError(f"{f.dst} already exists {where}: add --overwrite or --skip-existing")
+                raise RuntimeError(f"{f.dst} already exists {where}: add --overwrite-existing or --skip-existing")
             with prog.lock:  # keeps the progress line out of the question
                 sys.stderr.write("\n")
                 while True:
@@ -655,7 +655,7 @@ def main():
     p.add_argument("-n", "--connections", type=int, default=8)
     p.add_argument("--chunk", type=parse_size, default=2 << 20)
     p.add_argument("-r", "--recursive", action="store_true")
-    p.add_argument("--overwrite", dest="on_exists", action="store_const", const="overwrite",
+    p.add_argument("--overwrite-existing", dest="on_exists", action="store_const", const="overwrite",
                    help="replace files that already exist at the destination (no question)")
     p.add_argument("--skip-existing", dest="on_exists", action="store_const", const="skip",
                    help="leave files that already exist at the destination (no question)")

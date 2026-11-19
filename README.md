@@ -85,7 +85,7 @@ everything with examples).
 - A file that is already there is found when its turn comes (a big queue is
   not checked up front). You are asked once: Overwrite all, Skip all or Cancel
   transfer, which stops that upload and removes the files it had started. On
-  the command line, `--overwrite` or `--skip-existing` decide ahead of time.
+  the command line, `--overwrite-existing` or `--skip-existing` decide ahead of time.
 - Cancel all (web page), X twice (Switch) or `sw2xfer.py cancel` stops every
   transfer and copy, from any device; unfinished uploads and copies are
   deleted from the SD card.
@@ -96,7 +96,7 @@ Command line (Python 3; download it from `http://<switch-ip>:6967/sw2xfer.py`):
 python3 sw2xfer.py --host <switch-ip> upload /SourceFileOrFolder /DestinationPath
 python3 sw2xfer.py --host <switch-ip> download /SourceFileOrFolder /DestinationPath
 python3 sw2xfer.py --host <switch-ip> upload game.iso MyFolder /roms/ps2   # several sources, last path = destination
-python3 sw2xfer.py --host <switch-ip> upload MyFolder /roms --overwrite      # or --skip-existing
+python3 sw2xfer.py --host <switch-ip> upload MyFolder /roms --overwrite-existing   # or --skip-existing
 python3 sw2xfer.py --host <switch-ip> cancel
 python3 sw2xfer.py --host <switch-ip> logout     # forget the saved password sign-in
 python3 sw2xfer.py --host <switch-ip> bench /path/test.bin --levels 1,4,8
