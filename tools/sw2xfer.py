@@ -17,6 +17,10 @@ across all 8 connections.
 If the Switch has a password, you are asked for it once; the sign-in is kept
 for 12 hours (in ~/.config/sw2xfer, or %APPDATA%\\sw2xfer on Windows). For
 scripts, set SW2XFER_PASSWORD instead.
+
+If a file is already at the destination you are asked once, when its turn
+comes: Overwrite all, Skip all or Cancel transfer (which removes the files it
+had started). For scripts: --overwrite or --skip-existing.
   sw2xfer.py bench [/remote/file] [--size 512M]    upload + download speed test (file deleted after)
 
 Options: --host <switch-ip> (shown on the Switch screen; or set SW2XFER_HOST), --port 6967,
@@ -330,18 +334,56 @@ class _File:
         self.next_off = 0       # next chunk to hand out
         self.left = size        # bytes not yet moved
         self.busy = 0           # requests in flight
+        self.started = False    # past the duplicate check: something may have been written
 
 
-def transfer_batch(cl, jobs, n, chunk, upload):
+def transfer_batch(cl, jobs, n, chunk, upload, on_exists=None):
     """Moves jobs [(src, dst, size)] with n connections: up to FILES_AT_ONCE
     files in flight, each started by one connection; a connection with no file
     to start helps one in flight with its next chunk. So a queue of files goes
-    four at a time, and a file on its own gets all n connections."""
+    four at a time, and a file on its own gets all n connections.
+
+    A file already at the destination is found when its turn comes (not for
+    the whole queue up front); on_exists "overwrite" or "skip" decides, else
+    the user is asked once: Overwrite all, Skip all or Cancel transfer."""
     if not jobs:
         return 0
     total = sum(size for _, _, size in jobs)
     label = os.path.basename(jobs[0][0].rstrip("/")) if len(jobs) == 1 else f"{len(jobs)} files"
     prog = Progress(label, total)
+    policy = [on_exists]
+    ask_lock = threading.Lock()
+    skipped = []
+
+    def exists(f):
+        if not upload:
+            return os.path.exists(f.dst)
+        r, _ = cl.request("HEAD", f"/dl{q(f.dst)}?x={f.xid}")
+        return r.status == 200
+
+    def decide(f):  # "overwrite" or "skip"; raises Cancelled for Cancel transfer
+        with ask_lock:
+            if policy[0] == "cancel" or errors:  # someone already cancelled (or it failed)
+                raise Cancelled("transfer cancelled")
+            if policy[0]:
+                return policy[0]
+            where = "on the Switch" if upload else "here"
+            if not sys.stdin.isatty():
+                raise RuntimeError(f"{f.dst} already exists {where}: add --overwrite or --skip-existing")
+            with prog.lock:  # keeps the progress line out of the question
+                sys.stderr.write("\n")
+                while True:
+                    try:
+                        a = input(f"{f.dst} already exists {where}. Overwrite all, Skip all or Cancel transfer? [o/s/c] ").strip().lower()
+                    except EOFError:
+                        a = "c"
+                    if a[:1] in ("o", "s", "c"):
+                        break
+            if a[:1] == "c":
+                policy[0] = "cancel"
+                raise Cancelled("transfer cancelled")
+            policy[0] = "overwrite" if a[:1] == "o" else "skip"
+            return policy[0]
     pending = collections.deque(_File(*j) for j in jobs)
     active = []
     cv = threading.Condition()
@@ -427,9 +469,19 @@ def transfer_batch(cl, jobs, n, chunk, upload):
             kind, f, off = t
             try:
                 if kind == "start":
+                    if exists(f) and decide(f) == "skip":
+                        skipped.append(f)
+                        with prog.lock:
+                            prog.total -= f.size
+                        with cv:
+                            active.remove(f)
+                            cv.notify_all()
+                        continue
+                    f.started = True
                     if f.size <= chunk:
                         whole(f)
                         with cv:
+                            f.left = 0
                             finish(f)
                     else:
                         setup(f)
@@ -455,16 +507,23 @@ def transfer_batch(cl, jobs, n, chunk, upload):
     for t in ts:
         t.join()
     if errors:
-        for f in active:
+        for f in list(active):
             close(f)
-            if not upload and f.size > chunk and f.left > 0 and os.path.exists(f.dst):
-                try:
-                    os.unlink(f.dst)  # do not leave a half-downloaded file behind
-                except OSError:
-                    pass
+            if not f.started or f.left <= 0:
+                continue
+            try:  # do not leave a half-moved file behind
+                if upload:
+                    time.sleep(0.5)  # let the Switch notice the closed connection first
+                    cl.api("POST", "/api/delete", path=f.dst)
+                elif f.size > chunk and os.path.exists(f.dst):
+                    os.unlink(f.dst)
+            except (OSError, RuntimeError):
+                pass
         raise errors[0]
     prog.show(final=True)
-    return total
+    if skipped:
+        print(f"skipped {len(skipped)} file{'s' if len(skipped) > 1 else ''} already {'on the Switch' if upload else 'here'}", file=sys.stderr)
+    return total - sum(f.size for f in skipped)
 
 
 def remote_list(cl, path):
@@ -516,7 +575,7 @@ def cmd_put(cl, a):
         else:
             target = dest.rstrip("/") + "/" + os.path.basename(s) if into else dest
             jobs.append((s, target, os.path.getsize(s)))
-    total += transfer_batch(cl, jobs, a.connections, a.chunk, upload=True)
+    total += transfer_batch(cl, jobs, a.connections, a.chunk, upload=True, on_exists=a.on_exists)
     el = time.time() - t0
     print(f"uploaded {human(total)} in {el:.1f} s = {total / max(el, 1e-6) / (1 << 20):.2f} MB/s with {a.connections} connections")
 
@@ -548,7 +607,7 @@ def cmd_get(cl, a):
             get_tree(s, os.path.join(dest, os.path.basename(s.rstrip("/")) or "sd"))
         else:
             jobs.append((s, os.path.join(dest, os.path.basename(s)) if into else dest, e["size"]))
-    total += transfer_batch(cl, jobs, a.connections, a.chunk, upload=False)
+    total += transfer_batch(cl, jobs, a.connections, a.chunk, upload=False, on_exists=a.on_exists)
     el = time.time() - t0
     print(f"downloaded {human(total)} in {el:.1f} s = {total / max(el, 1e-6) / (1 << 20):.2f} MB/s with {a.connections} connections")
 
@@ -596,6 +655,10 @@ def main():
     p.add_argument("-n", "--connections", type=int, default=8)
     p.add_argument("--chunk", type=parse_size, default=2 << 20)
     p.add_argument("-r", "--recursive", action="store_true")
+    p.add_argument("--overwrite", dest="on_exists", action="store_const", const="overwrite",
+                   help="replace files that already exist at the destination (no question)")
+    p.add_argument("--skip-existing", dest="on_exists", action="store_const", const="skip",
+                   help="leave files that already exist at the destination (no question)")
     p.add_argument("--size", type=parse_size, default=256 << 20, help="bench file size")
     p.add_argument("--levels", type=lambda s: [int(x) for x in s.split(",")], default=[1, 4, 8], help="bench connection counts")
     a = p.parse_args()
@@ -633,7 +696,7 @@ def main():
         elif a.cmd == "info":
             print(json.dumps(cl.api("GET", "/api/info"), indent=2))
     except Cancelled:
-        sys.exit("\ncancelled")
+        sys.exit("\ncancelled (unfinished files removed)")
     except RuntimeError as e:
         sys.exit(f"error: {e}")
     except KeyboardInterrupt:

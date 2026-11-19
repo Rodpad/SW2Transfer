@@ -76,12 +76,16 @@ everything with examples).
 
 - Uploads go into the folder you are in: Upload files, Upload folder, or drag
   files and folders onto the page (subfolders are kept).
-- Click a file to download it, or tick several files and press Download.
-  Downloads over 3.5 GB use one connection.
+- Each file has a Download button; clicking a file ticks it, and Download in
+  the bar saves all ticked files. Downloads over 3.5 GB use one connection.
 - Connections (default 8) and chunk size (default 2 MB) were the fastest
   combination in tests. Up to 4 files upload at once, one connection each
   (files up to one chunk in one request), so folders of many small files are
   quick too; a big file on its own gets every connection.
+- A file that is already there is found when its turn comes (a big queue is
+  not checked up front). You are asked once: Overwrite all, Skip all or Cancel
+  transfer, which stops that upload and removes the files it had started. On
+  the command line, `--overwrite` or `--skip-existing` decide ahead of time.
 - Cancel all (web page), X twice (Switch) or `sw2xfer.py cancel` stops every
   transfer and copy, from any device; unfinished uploads and copies are
   deleted from the SD card.
@@ -92,6 +96,7 @@ Command line (Python 3; download it from `http://<switch-ip>:6967/sw2xfer.py`):
 python3 sw2xfer.py --host <switch-ip> upload /SourceFileOrFolder /DestinationPath
 python3 sw2xfer.py --host <switch-ip> download /SourceFileOrFolder /DestinationPath
 python3 sw2xfer.py --host <switch-ip> upload game.iso MyFolder /roms/ps2   # several sources, last path = destination
+python3 sw2xfer.py --host <switch-ip> upload MyFolder /roms --overwrite      # or --skip-existing
 python3 sw2xfer.py --host <switch-ip> cancel
 python3 sw2xfer.py --host <switch-ip> logout     # forget the saved password sign-in
 python3 sw2xfer.py --host <switch-ip> bench /path/test.bin --levels 1,4,8

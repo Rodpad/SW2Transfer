@@ -157,6 +157,11 @@ h2 { font-size: 14px; margin: 0; }
   <div class="picklist" id="pickList"></div>
   <div class="pickfoot"><button id="pickNew">New folder</button><span class="spacer"></span><button id="pickCancel">Cancel</button><button class="primary" id="pickOk"></button></div>
 </div></dialog>
+<dialog id="dupDlg"><div class="help">
+  <div class="top"><h2>Already on the Switch</h2></div>
+  <p id="dupMsg"></p>
+  <div class="pickfoot"><button id="dupCancel">Cancel transfer</button><span class="spacer"></span><button id="dupOverAll">Overwrite all</button><button class="primary" id="dupSkipAll">Skip all</button></div>
+</div></dialog>
 <dialog id="helpDlg"><div class="help">
   <div class="top"><h2>Help</h2><button id="helpClose">Close</button></div>
   <h3>Uploading</h3>
@@ -165,12 +170,13 @@ h2 { font-size: 14px; margin: 0; }
     <li><b>Upload files</b> picks one or more files. <b>Upload folder</b> picks a whole folder, subfolders included.</li>
     <li>You can also drag files and folders (several at once) anywhere onto the page.</li>
     <li>Up to 4 files upload at once, one connection each; a big file on its own is split into chunks that all the connections send together.</li>
+    <li>If a file is already on the Switch, you are asked once, when its turn comes: <b>Overwrite all</b>, <b>Skip all</b> or <b>Cancel transfer</b> (which stops this upload and removes the files it had started).</li>
   </ol>
   <h3>Downloading and managing files</h3>
   <ul>
-    <li>Click a file to download it. The chunks are put together in the browser, then saved to your Downloads.</li>
+    <li>Click a file to tick it. <b>Download</b> on its row saves it: the chunks are put together in the browser, then saved to your Downloads.</li>
     <li>Files over 3.5 GB download over a single connection.</li>
-    <li>Each row has <b>Rename</b> and <b>Delete</b> (deleting a folder removes everything in it). <b>New folder</b> makes a folder here.</li>
+    <li>Each file has <b>Download</b>, and every row has <b>Rename</b> and <b>Delete</b> (deleting a folder removes everything in it). <b>New folder</b> makes a folder here.</li>
     <li>Tick the boxes to work on several items: <b>Download</b> saves the ticked files, <b>Copy to&hellip;</b> and <b>Move to&hellip;</b> let you click through folders to pick the destination, <b>Delete</b> removes them. The box in the bar ticks everything in the folder.</li>
     <li><b>Password:</b> press &minus; on the Switch to set one. This page then asks for it, and keeps you signed in for 12 hours; <b>Sign out</b> ends it early.</li>
     <li><b>Cancel all</b> (under Transfers) stops every transfer and copy, from any device. Unfinished uploads and copies are deleted from the Switch. On the Switch, press X twice; in a terminal, <code>sw2xfer.py cancel</code>.</li>
@@ -307,23 +313,30 @@ function render() {
     name.append(e.up ? ".. (up)" : e.name);
     name.title = e.up ? "Up one folder" : e.name;
     const p = e.up ? cwd.replace(/\/[^/]*$/, "") || "/" : join(cwd, e.name);
-    name.onclick = () => e.dir ? go(p) : download(p, e.size);
     const size = td("num c-size", e.dir ? "" : human(e.size));
     const created = td("num c-created", e.up ? "" : fmtTime(e.created));
     const modified = td("num c-modified", e.up ? "" : fmtTime(e.modified));
+    let cb = null;
     if (!e.up) {
-      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = selected.has(p);
+      cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = selected.has(p);
       cb.setAttribute("aria-label", "Select " + e.name);
       tr.classList.toggle("picked", cb.checked);
       cb.onchange = () => { if (cb.checked) selected.set(p, { path: p, name: e.name, dir: e.dir, size: e.size }); else selected.delete(p); tr.classList.toggle("picked", cb.checked); selUpdate(); };
       sel.append(cb);
     }
+    // A folder opens; a file is ticked or unticked (its Download button saves it).
+    name.onclick = () => { if (e.dir) go(p); else { cb.checked = !cb.checked; cb.onchange(); } };
     const act = td("act");
     if (!e.up) {
       const ren = document.createElement("button"); ren.textContent = "Rename";
       ren.onclick = async () => { const to = prompt("New name", e.name); if (!to || to === e.name) return; await guard(() => api("POST", "/api/rename", { from: p, to: join(cwd, to) })); refresh(); };
       const del = document.createElement("button"); del.textContent = "Delete";
       del.onclick = async () => { if (!confirm(`Delete ${e.name}${e.dir ? " and everything in it" : ""}?`)) return; await guard(() => api("POST", "/api/delete", { path: p, recursive: e.dir ? "1" : "0" })); refresh(); };
+      if (!e.dir) {
+        const dl = document.createElement("button"); dl.textContent = "Download";
+        dl.onclick = () => download(p, e.size);
+        act.append(dl, " ");
+      }
       act.append(ren, " ", del);
     }
     tr.append(sel, name, size, created, modified, act); list.append(tr);
@@ -367,6 +380,7 @@ function paint() {
     el.querySelector(".prog > div").style.width = (x.size ? 100 * x.done / x.size : 100) + "%";
     if (x.state === "queued") { s.textContent = "waiting"; continue; }
     if (x.state === "run") { if (x.up !== "copy") speed += mbs; s.textContent = `${human(x.done)} / ${human(x.size)} · ${mbs.toFixed(1)} MB/s`; }
+    else if (x.state === "skipped") { el.classList.add("done"); s.textContent = "Skipped: already on the Switch"; }
     else if (x.state === "done") { el.classList.add("done"); s.textContent = `${human(x.size)} in ${sec.toFixed(1)} s · ${mbs.toFixed(1)} MB/s`; }
     else { el.classList.add("failed"); s.textContent = x.error || "Failed"; }
   }
@@ -434,15 +448,49 @@ async function withRetry(fn) {
   }
 }
 
+// Name clashes are checked as each upload starts (not for the whole queue up
+// front). The first one asks once: Overwrite all, Skip all or Cancel transfer;
+// the answer lasts until the queue is empty (or Cancel all).
+let dupPolicy = null, dupChain = Promise.resolve();
+async function existsOnSwitch(remote, signal) {
+  const r = await fetch(`/dl${enc(remote)}`, { method: "HEAD", signal });
+  if (r.status === 401) throw new NeedLogin();
+  return r.status === 200;
+}
+function askDuplicate(remote) {  // resolves "overwrite", "skip" or "cancel"
+  const ask = () => dupPolicy || new Promise((resolve) => {
+    const d = $("dupDlg"), slash = remote.lastIndexOf("/");
+    $("dupMsg").textContent = `${remote.slice(slash + 1)} already exists in ${remote.slice(0, slash) || "/"}. What should happen to files in this upload that are already on the Switch?`;
+    const pick = (choice) => { dupPolicy = choice; d.onclose = null; d.close(); resolve(choice); };
+    $("dupOverAll").onclick = () => pick("overwrite");
+    $("dupSkipAll").onclick = () => pick("skip");
+    $("dupCancel").onclick = () => pick("cancel");
+    d.onclose = () => { dupPolicy = "skip"; resolve("skip"); };  // Esc: the safe choice
+    d.showModal();
+  });
+  const p = dupChain.then(ask);
+  dupChain = p.catch(() => {});
+  return p;
+}
+
 const upQueue = []; let upBusy = false;
-function queueUpload(file, remote) { upQueue.push({ file, remote, x: addXfer(remote, file.size, true) }); pumpUploads(); }
+let upWaiters = [];  // idle upload connections; woken when there may be work
+const wakeUploads = () => { const w = upWaiters; upWaiters = []; w.forEach((f) => f()); };
+function queueUpload(file, remote) { upQueue.push({ file, remote, x: addXfer(remote, file.size, true) }); wakeUploads(); pumpUploads(); }
 async function pumpUploads() {
   if (upBusy) return; upBusy = true;
   while (upQueue.length) {
     const { n, chunk } = settings();
-    const signal = abortCtl.signal, active = [];
-    let waiters = [];
-    const wakeAll = () => { const w = waiters; waiters = []; w.forEach((f) => f()); };
+    // Cancel transfer (from the duplicate question) stops this queue only.
+    const runCtl = new AbortController(), started = [];
+    const signal = AbortSignal.any ? AbortSignal.any([abortCtl.signal, runCtl.signal]) : abortCtl.signal, active = [];
+    let stopped = false;
+    const stopRun = () => {
+      if (stopped) return; stopped = true;
+      for (const it of upQueue.splice(0)) { it.x.state = "cancelled"; it.x.error = "Cancelled"; it.x.t1 = performance.now(); }
+      runCtl.abort(); wakeAll();
+    };
+    const wakeAll = wakeUploads;
     const drop = (f) => { const i = active.indexOf(f); if (i >= 0) active.splice(i, 1); wakeAll(); };
     const worker = async () => {
       for (;;) {
@@ -459,12 +507,23 @@ async function pumpUploads() {
         }
         if (!task) {
           if (!upQueue.length && !active.length) return;
-          await new Promise((r) => { waiters.push(r); setTimeout(r, 500); });
+          await new Promise((r) => { upWaiters.push(r); setTimeout(r, 500); });
           continue;
         }
         const { f } = task, { file, remote, x } = f;
         try {
           if (task.start) {
+            if (await withRetry(() => existsOnSwitch(remote, signal))) {
+              const choice = await askDuplicate(remote);
+              if (choice === "cancel") stopRun();
+              if (choice !== "overwrite") {
+                if (choice === "skip") { x.state = "skipped"; x.t0 = x.t1 = performance.now(); }
+                else { x.state = "cancelled"; x.error = "Cancelled"; x.t1 = performance.now(); }
+                f.dead = true; drop(f); refresh(); continue;
+              }
+            }
+            if (signal.aborted) throw new Cancelled();
+            started.push(f);
             x.t0 = performance.now();
             if (file.size <= chunk) {
               // No offset: the Switch creates (or replaces) the file in this one request.
@@ -489,8 +548,15 @@ async function pumpUploads() {
     await Promise.all(Array.from({ length: Math.max(1, n) }, worker));
     for (const f of active) if (!f.dead) { f.dead = true; failXfer(f.x, new Cancelled()); }  // stopped by a cancel
     refresh();
+    if (stopped) {  // Cancel transfer: remove what this queue had started but not finished
+      await new Promise((r) => setTimeout(r, 800));  // let the Switch notice the closed connections
+      for (const f of started) if (f.x.state !== "done") await api("POST", "/api/delete", { path: f.remote }).catch(() => {});
+      refresh();
+    }
+    dupPolicy = null;
   }
   upBusy = false;
+  dupPolicy = null;
 }
 
 async function download(path, size) {
@@ -522,6 +588,8 @@ async function cancelEverything() {
   if (!confirm("Cancel all transfers and copies?\n\nThis stops them on every device. Unfinished uploads and copies are deleted from the Switch.")) return;
   try { await api("POST", "/api/cancel", {}); } catch (e) {}
   abortCtl.abort(); abortCtl = new AbortController();
+  if ($("dupDlg").open) $("dupDlg").close();
+  dupPolicy = null;
   for (const q of upQueue.splice(0)) { q.x.state = "cancelled"; q.x.error = "Cancelled"; q.x.t1 = performance.now(); }
   setTimeout(refresh, 1500);  // the Switch removes unfinished uploads
 }
@@ -700,6 +768,11 @@ async function pollCopies() {
     "# several sources at once: the last path is the destination",
     `${c} upload game.iso MyFolder /roms/ps2`,
     `${c} download /roms/ps2/game.iso /roms/ps2/Saves ~/Downloads`,
+    "",
+    "# files already there: you are asked once (Overwrite all, Skip all, Cancel transfer),",
+    "# or decide ahead of time:",
+    `${c} upload MyFolder /roms --overwrite`,
+    `${c} upload MyFolder /roms --skip-existing`,
     "",
     "# list, make, delete, rename",
     `${c} ls /path`,
