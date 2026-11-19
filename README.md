@@ -76,8 +76,11 @@ everything with examples).
 
 - Uploads go into the folder you are in: Upload files, Upload folder, or drag
   files and folders onto the page (subfolders are kept).
-- Each file has a Download button; clicking a file ticks it, and Download in
-  the bar saves all ticked files. Downloads over 3.5 GB use one connection.
+- Each file has a Download button that saves just that file; clicking a file
+  ticks it. Download selected saves one ticked file as it is, or several items
+  (folders with everything in them) as one `transfer.zip`. Browser downloads
+  are put together in memory: a single file over 3.5 GB uses one connection
+  instead, and a zip is limited to 1.5 GB (use the command line for more).
 - Connections (default 8) and chunk size (default 2 MB) were the fastest
   combination in tests. Up to 4 files upload at once, one connection each
   (files up to one chunk in one request), so folders of many small files are

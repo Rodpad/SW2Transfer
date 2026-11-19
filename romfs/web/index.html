@@ -132,7 +132,7 @@ h2 { font-size: 14px; margin: 0; }
       <input type="checkbox" id="selAll" title="Select everything in this folder">
       <span class="meta" id="selCount">Tick items to download, copy, move or delete several at once</span>
       <span class="spacer"></span>
-      <button id="selDownload" disabled>Download</button>
+      <button id="selDownload" disabled>Download selected</button>
       <button id="selCopy" disabled>Copy to&hellip;</button>
       <button id="selMove" disabled>Move to&hellip;</button>
       <button id="selDelete" disabled>Delete</button>
@@ -177,11 +177,11 @@ h2 { font-size: 14px; margin: 0; }
     <li>Click a file to tick it. <b>Download</b> on its row saves it: the chunks are put together in the browser, then saved to your Downloads.</li>
     <li>Files over 3.5 GB download over a single connection.</li>
     <li>Each file has <b>Download</b>, and every row has <b>Rename</b> and <b>Delete</b> (deleting a folder removes everything in it). <b>New folder</b> makes a folder here.</li>
-    <li>Tick the boxes to work on several items: <b>Download</b> saves the ticked files, <b>Copy to&hellip;</b> and <b>Move to&hellip;</b> let you click through folders to pick the destination, <b>Delete</b> removes them. The box in the bar ticks everything in the folder.</li>
+    <li>Tick the boxes to work on several items: <b>Download selected</b> saves them (see below), <b>Copy to&hellip;</b> and <b>Move to&hellip;</b> let you click through folders to pick the destination, <b>Delete</b> removes them. The box in the bar ticks everything in the folder.</li>
     <li><b>Password:</b> press &minus; on the Switch to set one. This page then asks for it, and keeps you signed in for 12 hours; <b>Sign out</b> ends it early.</li>
     <li><b>Cancel all</b> (under Transfers) stops every transfer and copy, from any device. Unfinished uploads and copies are deleted from the Switch. On the Switch, press X twice; in a terminal, <code>sw2xfer.py cancel</code>.</li>
     <li>Copies run on the Switch and show their progress under Transfers. A copy into the same folder is named &ldquo;name copy&rdquo;. Moves are instant and never replace an existing item.</li>
-    <li>To download a whole folder to your computer, use the command-line client below.</li>
+    <li><b>Download selected</b> saves one ticked file as it is; several items, or folders (with everything in them), come as one <code>transfer.zip</code>. A file's own <b>Download</b> button always saves just that file. A zip is limited to 1.5 GB, since the browser builds it in memory; use the command-line client for more.</li>
   </ul>
   <h3>Speed settings</h3>
   <p><b>Connections</b> is how many connections share each file; <b>Chunk</b> is the piece each one moves at a time. 8 connections with 2 MB chunks were fastest in tests; more than 8 tends to slow downloads.</p>
@@ -302,7 +302,7 @@ function render() {
   header();
   const ents = sorted(listing);
   list.innerHTML = "";
-  shown = ents.map((e) => ({ path: join(cwd, e.name), name: e.name, dir: e.dir, size: e.size }));
+  shown = ents.map((e) => ({ path: join(cwd, e.name), name: e.name, dir: e.dir, size: e.size, modified: e.modified }));
   for (const p of [...selected.keys()]) if (!shown.some((e) => e.path === p)) selected.delete(p);
   if (cwd !== "/") ents.unshift({ name: "..", dir: true, up: true });
   for (const e of ents) {
@@ -321,7 +321,7 @@ function render() {
       cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = selected.has(p);
       cb.setAttribute("aria-label", "Select " + e.name);
       tr.classList.toggle("picked", cb.checked);
-      cb.onchange = () => { if (cb.checked) selected.set(p, { path: p, name: e.name, dir: e.dir, size: e.size }); else selected.delete(p); tr.classList.toggle("picked", cb.checked); selUpdate(); };
+      cb.onchange = () => { if (cb.checked) selected.set(p, { path: p, name: e.name, dir: e.dir, size: e.size, modified: e.modified }); else selected.delete(p); tr.classList.toggle("picked", cb.checked); selUpdate(); };
       sel.append(cb);
     }
     // A folder opens; a file is ticked or unticked (its Download button saves it).
@@ -559,28 +559,122 @@ async function pumpUploads() {
   dupPolicy = null;
 }
 
+// Fetches one file from the Switch into a Blob: chunks over n connections
+// (one request for files up to a chunk). onBytes(k) reports progress.
+async function fetchBlob(path, size, n, chunk, signal, onBytes) {
+  const id = newId(), parts = new Array(Math.ceil(size / chunk));
+  await parallel(parts.length, n, async (i) => {
+    if (signal.aborted) throw new Cancelled();
+    const a = i * chunk, b = Math.min(a + chunk, size) - 1;
+    const r = check(await fetch(`/dl${enc(path)}?x=${id}`, { headers: size > chunk ? { Range: `bytes=${a}-${b}` } : {}, signal }));
+    const blob = await r.blob();
+    if (blob.size !== b - a + 1) throw new Error("short chunk");
+    parts[i] = blob; onBytes(blob.size);
+  });
+  return new Blob(parts);
+}
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// The download is put together in the browser; past this size it would not
+// fit comfortably in memory (a single big file then uses a plain link).
+const BROWSER_MAX = 3.5 * 1073741824;
+// transfer.zip holds every file in memory at once, plus the zip itself.
+const ZIP_MAX = 1.5 * 1073741824;
+
 async function download(path, size) {
   const name = path.split("/").pop();
-  // Chunks are held in memory until the file is complete; very large files
-  // use a plain single-connection link instead.
-  if (size > 3.5 * 1073741824) { location.href = `/dl${enc(path)}?dl=1`; return; }
+  if (size > BROWSER_MAX) { location.href = `/dl${enc(path)}?dl=1`; return; }
   const x = addXfer(path, size, false);
-  const id = newId(), signal = abortCtl.signal;
   try {
     const { n, chunk } = settings();
-    const parts = new Array(Math.ceil(size / chunk));
-    await parallel(parts.length, n, async (i) => {
-      if (signal.aborted) throw new Cancelled();
-      const a = i * chunk, b = Math.min(a + chunk, size) - 1;
-      const r = check(await fetch(`/dl${enc(path)}?x=${id}`, { headers: { Range: `bytes=${a}-${b}` }, signal }));
-      const blob = await r.blob();
-      if (blob.size !== b - a + 1) throw new Error("short chunk");
-      parts[i] = blob; x.done += blob.size;
-    });
+    const blob = await fetchBlob(path, size, n, chunk, abortCtl.signal, (k) => { x.done += k; });
     x.state = "done"; x.t1 = performance.now();
-    const url = URL.createObjectURL(new Blob(parts, { type: "application/octet-stream" }));
-    const a = document.createElement("a"); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    saveBlob(new Blob([blob], { type: "application/octet-stream" }), name);
+  } catch (e) { failXfer(x, e); }
+}
+
+// ---- transfer.zip: several selected items in one download.
+// Files are stored as they are (no compression: ROMs, images and saves are
+// mostly compressed already, and it keeps the zip quick to build).
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) { let c = i; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[i] = c >>> 0; }
+  return t;
+})();
+async function crc32(blob) {
+  let c = 0xFFFFFFFF;
+  for (let off = 0; off < blob.size; off += 8 << 20) {
+    const b = new Uint8Array(await blob.slice(off, off + (8 << 20)).arrayBuffer());
+    for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 255] ^ (c >>> 8);
+  }
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function dosTime(sec) {
+  const d = sec ? new Date(sec * 1000) : new Date();
+  if (d.getFullYear() < 1980) return [0, (1 << 5) | 1];
+  return [(d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1),
+          ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()];
+}
+// entries: [{ name: "a/b.txt" or "a/" (folder), blob, crc, mtime }]
+function buildZip(entries) {
+  const out = [], central = [], te = new TextEncoder();
+  let offset = 0;
+  for (const e of entries) {
+    const name = te.encode(e.name), size = e.blob ? e.blob.size : 0, [tm, dt] = dosTime(e.mtime);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true);  // UTF-8 names
+    h.setUint16(8, 0, true); h.setUint16(10, tm, true); h.setUint16(12, dt, true);
+    h.setUint32(14, e.crc || 0, true); h.setUint32(18, size, true); h.setUint32(22, size, true);
+    h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+    out.push(h, name); if (e.blob) out.push(e.blob);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+    c.setUint16(10, 0, true); c.setUint16(12, tm, true); c.setUint16(14, dt, true);
+    c.setUint32(16, e.crc || 0, true); c.setUint32(20, size, true); c.setUint32(24, size, true);
+    c.setUint16(28, name.length, true); c.setUint32(38, e.blob ? 0 : 0x10, true); c.setUint32(42, offset, true);
+    central.push(c, name);
+    offset += 30 + name.length + size;
+  }
+  const cdSize = central.reduce((t, p) => t + p.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+  end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+  return new Blob([...out, ...central, end], { type: "application/zip" });
+}
+
+// Ticked files and folders (with everything in them) as transfer.zip.
+async function downloadZip(items) {
+  const files = [], folders = [];
+  const walk = async (path, rel) => {
+    folders.push(rel + "/");
+    for (const e of (await api("GET", "/api/list", { path })).entries) {
+      const p = join(path, e.name), r = rel + "/" + e.name;
+      if (e.dir) await walk(p, r); else files.push({ path: p, name: r, size: e.size, mtime: e.modified });
+    }
+  };
+  try {
+    for (const it of items) if (it.dir) await walk(it.path, it.name); else files.push({ path: it.path, name: it.name, size: it.size, mtime: it.modified });
+  } catch (e) { alert("Could not list the folders: " + e.message); return; }
+  const total = files.reduce((t, f) => t + f.size, 0);
+  if (total > ZIP_MAX) { alert(`That is ${human(total)}: too much to put together in the browser (transfer.zip is limited to 1.5 GB). Select less, or use the command-line client.`); return; }
+  if (files.length + folders.length > 65535) { alert("That is too many files for one zip. Select less, or use the command-line client."); return; }
+  const x = addXfer("transfer.zip", total, false);
+  const signal = abortCtl.signal;
+  try {
+    const { n, chunk } = settings();
+    const per = Math.max(1, Math.floor(n / Math.min(FILES_AT_ONCE, n)));  // connections per file
+    await parallel(files.length, Math.min(FILES_AT_ONCE, n), async (i) => {
+      const f = files[i];
+      f.blob = await fetchBlob(f.path, f.size, per, chunk, signal, (k) => { x.done += k; });
+      f.crc = await crc32(f.blob);
+    });
+    const entries = [...folders.map((name) => ({ name })), ...files].sort((a, b) => a.name.localeCompare(b.name));
+    saveBlob(buildZip(entries), "transfer.zip");
+    x.state = "done"; x.t1 = performance.now();
   } catch (e) { failXfer(x, e); }
 }
 
@@ -636,8 +730,8 @@ function selUpdate() {
   const n = selected.size, files = [...selected.values()].filter((e) => !e.dir).length;
   $("selCount").textContent = n ? `${n} selected` : "Tick items to download, copy, move or delete several at once";
   for (const id of ["selCopy", "selMove", "selDelete"]) $(id).disabled = !n;
-  $("selDownload").disabled = !files;
-  $("selDownload").title = files ? "Downloads the selected files (not folders)" : "Select files to download";
+  $("selDownload").disabled = !n;
+  $("selDownload").title = n === 1 && files === 1 ? "Downloads the selected file" : n ? "Downloads everything selected as transfer.zip (folders with everything in them)" : "Select files or folders to download";
   $("selAll").checked = shown.length > 0 && shown.every((e) => selected.has(e.path));
   $("selAll").indeterminate = n > 0 && !$("selAll").checked;
 }
@@ -645,9 +739,10 @@ $("selAll").onchange = () => {
   if ($("selAll").checked) for (const e of shown) selected.set(e.path, e); else selected.clear();
   render();
 };
-$("selDownload").onclick = async () => {
-  const files = [...selected.values()].filter((e) => !e.dir);
-  for (const f of files) await download(f.path, f.size);
+$("selDownload").onclick = () => {
+  const items = [...selected.values()];
+  if (items.length === 1 && !items[0].dir) download(items[0].path, items[0].size);  // one file: as itself
+  else if (items.length) downloadZip(items);
 };
 $("selDelete").onclick = async () => {
   const items = [...selected.values()];
