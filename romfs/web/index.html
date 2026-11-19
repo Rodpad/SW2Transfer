@@ -181,7 +181,7 @@ h2 { font-size: 14px; margin: 0; }
     <li><b>Password:</b> press &minus; on the Switch to set one. This page then asks for it, and keeps you signed in for 12 hours; <b>Sign out</b> ends it early.</li>
     <li><b>Cancel all</b> (under Transfers) stops every transfer and copy, from any device. Unfinished uploads and copies are deleted from the Switch. On the Switch, press X twice; in a terminal, <code>sw2xfer.py cancel</code>.</li>
     <li>Copies run on the Switch and show their progress under Transfers. A copy into the same folder is named &ldquo;name copy&rdquo;. Moves are instant and never replace an existing item.</li>
-    <li><b>Download selected</b> saves one ticked file as it is; several items, or folders (with everything in them), come as one <code>transfer.zip</code>. A file's own <b>Download</b> button always saves just that file. A zip is limited to 1.5 GB, since the browser builds it in memory; past that the page offers to download the files one by one instead (into Downloads, without their folders). The command-line client keeps folders and has no limit.</li>
+    <li><b>Download selected</b> saves one ticked file as it is; several items, or folders (with everything in them), come as one <code>transfer.zip</code>. A file's own <b>Download</b> button always saves just that file. A zip is limited to 1.5 GB, since the browser builds it in memory; past that the page offers to download the files one by one instead (into Downloads, without their folders), or, when the selection has more than one folder, points you to the command-line client (it keeps folders and has no limit) or FTP.</li>
   </ul>
   <h3>Speed settings</h3>
   <p><b>Connections</b> is how many connections share each file; <b>Chunk</b> is the piece each one moves at a time. 8 connections with 2 MB chunks were fastest in tests; more than 8 tends to slow downloads.</p>
@@ -661,6 +661,15 @@ async function downloadZip(items) {
     for (const it of items) if (it.dir) await walk(it.path, it.name); else files.push({ path: it.path, name: it.name, size: it.size, mtime: it.modified });
   } catch (e) { alert("Could not list the folders: " + e.message); return; }
   const total = files.reduce((t, f) => t + f.size, 0);
+  if (total > ZIP_MAX && folders.length > 1) {
+    // Too big for a zip, and file-by-file downloads would lose the folders.
+    const q = (p) => `"${p.replace(/"/g, '\\"')}"`;
+    alert(`That is ${human(total)} in ${files.length} files across ${folders.length} folders: too much for one transfer.zip (the limit is 1.5 GB), and downloading the files one by one would lose the folders.\n\n` +
+          `Use the command-line client instead (Help has it), which keeps the folders:\n\n` +
+          `python3 sw2xfer.py --host ${location.hostname} download ${items.map((it) => q(it.path)).join(" ")} ~/Downloads\n\n` +
+          `or an FTP client (FTP is slower).`);
+    return;
+  }
   if (total > ZIP_MAX) {
     // Too big for a zip in memory: hand each file to the browser's own downloads
     // (straight to disk, any size), one after another.
