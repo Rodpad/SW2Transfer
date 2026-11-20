@@ -165,14 +165,9 @@ static std::vector<float> verts;
 
 static void setScreen(GLint loc) { glUniform2f(loc, SCREEN_W, SCREEN_H); }
 
-float text(const std::string& s, float x, float y, float size, Color c, Font f) {
-  x *= UI_SCALE; y *= UI_SCALE; size *= UI_SCALE;
-  int px = (int)(size + 0.5f);
-  FT_Face face = faces[f];
-  FT_Set_Pixel_Sizes(face, 0, px);
-  float ascender = face->size->metrics.ascender / 64.0f, descender = -face->size->metrics.descender / 64.0f;
-  float baseline = (float)(int)(y + (size * 1.25f - (ascender + descender)) / 2 + ascender + 0.5f);
-  float pen = (float)(int)(x + 0.5f);
+// Draws s with its baseline at `baseline` and pen at `pen` (screen pixels, whole).
+static float drawAt(const std::string& s, float pen, float baseline, int px, Color c, Font f) {
+  float x = pen;
   verts.clear();
   for (size_t i = 0; i < s.size();) {
     const Glyph& g = glyph(f, px, nextCodepoint(s, i));
@@ -193,6 +188,41 @@ float text(const std::string& s, float x, float y, float size, Color c, Font f) 
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(verts.size() / 4));
   }
   return (pen - x) / UI_SCALE;
+}
+
+float text(const std::string& s, float x, float y, float size, Color c, Font f) {
+  x *= UI_SCALE; y *= UI_SCALE; size *= UI_SCALE;
+  int px = (int)(size + 0.5f);
+  FT_Face face = faces[f];
+  FT_Set_Pixel_Sizes(face, 0, px);
+  float ascender = face->size->metrics.ascender / 64.0f, descender = -face->size->metrics.descender / 64.0f;
+  float baseline = (float)(int)(y + (size * 1.25f - (ascender + descender)) / 2 + ascender + 0.5f);
+  return drawAt(s, (float)(int)(x + 0.5f), baseline, px, c, f);
+}
+
+// Label text: capital letters centred on cy (descenders hang below, as in
+// print), starting at x.
+float textMid(const std::string& s, float x, float cy, float size, Color c, Font f) {
+  int px = (int)(size * UI_SCALE + 0.5f);
+  float capH = (float)glyph(f, px, 'H').top;
+  return drawAt(s, (float)(int)(x * UI_SCALE + 0.5f), (float)(int)(cy * UI_SCALE + capH / 2 + 0.5f), px, c, f);
+}
+
+// The ink of s centred on (cx, cy): for a letter or symbol in a badge.
+void textCenter(const std::string& s, float cx, float cy, float size, Color c, Font f) {
+  int px = (int)(size * UI_SCALE + 0.5f);
+  float pen = 0, left = 1e9f, right = -1e9f, top = 1e9f, bottom = -1e9f;
+  for (size_t i = 0; i < s.size();) {
+    const Glyph& g = glyph(f, px, nextCodepoint(s, i));
+    if (g.w > 0) {
+      left = std::min(left, pen + g.left); right = std::max(right, pen + g.left + g.w);
+      top = std::min(top, (float)-g.top); bottom = std::max(bottom, (float)(g.h - g.top));
+    }
+    pen += g.advance;
+  }
+  if (right < left) return;
+  float x = cx * UI_SCALE - (left + right) / 2, base = cy * UI_SCALE - (top + bottom) / 2;
+  drawAt(s, (float)(int)(x + 0.5f), (float)(int)(base + 0.5f), px, c, f);
 }
 
 static void quad(float x, float y, float w, float h, float u0, float v0, float u1, float v1) {

@@ -273,10 +273,10 @@ static void touchButton(float x, float y, float w, float h, const std::string& k
   if (!key.empty()) {
     float d = badgeSize(size), by = snap(y + (h - d) / 2), ks = size * 0.8f;
     gfx::rect(cx, by, d, d, rgb(0xff3b4f), d / 2);
-    gfx::text(key, snap(cx + (d - gfx::textWidth(key, ks, gfx::BOLD)) / 2), by + (d - ks * 1.25f) / 2, ks, rgb(0xffffff), gfx::BOLD);
+    gfx::textCenter(key, cx + d / 2, by + d / 2, ks, rgb(0xffffff), gfx::BOLD);
     cx += d + BTN_GAP;
   }
-  gfx::text(label, cx, y + (h - size * 1.25f) / 2, size, rgb(0xe8eaee));
+  gfx::textMid(label, cx, y + h / 2, size, rgb(0xe8eaee));
   g_btns.push_back({x, y, w, h, code});
 }
 
@@ -716,10 +716,11 @@ int main(int, char**) {
     if (!status.empty()) gfx::text(status, W - M - gfx::textWidth(status, 20, gfx::BOLD), 30, 20, ACCENT, gfx::BOLD);
     else if (viaPlugin) {  // make it plain that the background plugin is doing the work
       const char* pill = plAnswering ? "Background plugin running" : "Background plugin not answering";
-      float pw = gfx::textWidth(pill, 18, gfx::BOLD) + 40;
-      gfx::rect(W - M - pw, 22, pw, 38, plAnswering ? rgb(0x2f8f4e) : rgb(0xb7791f), 19);
-      gfx::rect(W - M - pw + 16, 37, 8, 8, TEXT, 4);
-      gfx::text(pill, W - M - pw + 30, 31, 18, TEXT, gfx::BOLD);
+      // [18] dot [10] text [18], centred on the pill's middle line
+      float pw = roundf((18 + 8 + 10 + gfx::textWidth(pill, 18, gfx::BOLD) + 18) * UI_SCALE) / UI_SCALE, px = roundf((W - M - pw) * UI_SCALE) / UI_SCALE;
+      gfx::rect(px, 22, pw, 38, plAnswering ? rgb(0x2f8f4e) : rgb(0xb7791f), 19);
+      gfx::rect(px + 18, 22 + 19 - 4, 8, 8, TEXT, 4);
+      gfx::textMid(pill, px + 18 + 8 + 10, 22 + 19, 18, TEXT, gfx::BOLD);
     } else if (panel.installed) {
       const char* note = panel.stoppedHere ? "Background plugin stopped until the console restarts" : "Background plugin installed: it starts when the console restarts";
       gfx::text(note, W - M - gfx::textWidth(note, 16), 34, 16, MUTED);
@@ -831,13 +832,13 @@ int main(int, char**) {
     if (!toast.empty()) {
       float aw = gfx::textWidth(toast, 20, gfx::BOLD) + 48;
       gfx::rect((W - aw) / 2, gfx::UI_H - 132, aw, 44, toastBad ? ACCENT : rgb(0x2f8f4e), 22);
-      gfx::text(toast, (W - aw) / 2 + 24, gfx::UI_H - 122, 20, TEXT, gfx::BOLD);
+      gfx::textMid(toast, (W - aw) / 2 + 24, gfx::UI_H - 132 + 22, 20, TEXT, gfx::BOLD);
     }
     if (cancelAsk > 0) {
       const char* ask = "Press X again to cancel all transfers";
       float aw = gfx::textWidth(ask, 20, gfx::BOLD) + 48;
       gfx::rect((W - aw) / 2, gfx::UI_H - 132, aw, 44, ACCENT, 22);
-      gfx::text(ask, (W - aw) / 2 + 24, gfx::UI_H - 122, 20, TEXT, gfx::BOLD);
+      gfx::textMid(ask, (W - aw) / 2 + 24, gfx::UI_H - 132 + 22, 20, TEXT, gfx::BOLD);
     }
     float footerLeft = W - M;
     {  // buttons: press them, or tap them
@@ -866,7 +867,7 @@ int main(int, char**) {
     if (showPanel && !toast.empty()) {  // messages from the panel show over it
       float aw = gfx::textWidth(toast, 20, gfx::BOLD) + 48;
       gfx::rect((W - aw) / 2, 40, aw, 44, toastBad ? ACCENT : rgb(0x2f8f4e), 22);
-      gfx::text(toast, (W - aw) / 2 + 24, 50, 20, TEXT, gfx::BOLD);
+      gfx::textMid(toast, (W - aw) / 2 + 24, 40 + 22, 20, TEXT, gfx::BOLD);
     }
     {
       std::lock_guard<std::mutex> lk(g_screen.mu);

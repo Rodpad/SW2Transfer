@@ -43,6 +43,10 @@ enum Font { REGULAR = 0, BOLD = 1, MONO = 2 };
 float textWidth(const std::string& s, float size, Font f = REGULAR);
 // Draws one line with its top at y (line box of 1.25 * size); returns its width.
 float text(const std::string& s, float x, float y, float size, Color c, Font f = REGULAR);
+// Capital letters centred on cy, starting at x (labels in buttons and pills).
+float textMid(const std::string& s, float x, float cy, float size, Color c, Font f = REGULAR);
+// The visible ink of s centred on (cx, cy) (a letter or symbol in a badge).
+void textCenter(const std::string& s, float cx, float cy, float size, Color c, Font f = REGULAR);
 // Fits text into width with "...", for list rows.
 std::string ellipsize(const std::string& s, float width, float size, Font f = REGULAR);
 
