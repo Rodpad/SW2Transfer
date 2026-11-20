@@ -324,12 +324,12 @@ static void drawHelp(const std::string& host, int port) {
   const std::string B = "\xE2\x80\xA2  ", DOT = "   \xC2\xB7   ";
   std::vector<L> lines = {
     {0, "Web browser (no install)"},
-    {1, B + "On a computer or phone on the same network, open  " + url},
+    {1, B + "On a computer or phone on the same network, open  " + url + "  (the fastest way, with the command line below)"},
     {1, B + "Click a folder to open it; uploads go into the folder you are in. Upload files, Upload folder, or drag them onto the page."},
     {1, B + "Click a file to tick it. Download saves it (several ticked: one transfer.zip). Rename, Delete and New folder manage files."},
     {1, B + "Cancel all (web page), X twice (here) or the cancel command stops every transfer and copy; unfinished ones are deleted."},
     {1, B + "Password: press \xE2\x80\x93 to set, change or remove it. Browsers, FTP and the command line then ask for it."},
-    {1, B + "FTP: any FTP client (FileZilla, Cyberduck, WinSCP...), server " + host + ", port 6700, passive mode."},
+    {1, B + "FTP: any FTP client (FileZilla, Cyberduck, WinSCP...), server " + host + ", port 6700, passive mode. Slower: one connection per file."},
     {1, B + "Background plugin (A): serves transfers from startup, also while games run, without this app open."},
     {3, ""},
     {0, "Command line (Mac, Windows, Linux with Python 3)"},
@@ -755,10 +755,17 @@ int main(int, char**) {
         {"Transfer by FTP:", ftpPort ? "ftp://" + host + ":" + std::to_string(ftpPort) : std::string("not available (port 6700 in use)"), ftpPort != 0}};
       float lw = gfx::textWidth(rows[0].label, 18, gfx::BOLD) + 16;  // values line up after the longer label
       for (int i = 0; i < 2; i++) {
-        float cy = y + (i == 0 ? 40 : 90);
+        float cy = y + (i == 0 ? 40 : 90), vx = M + 28 + lw;
         gfx::textMid(rows[i].label, M + 28, cy, 18, TEXT, gfx::BOLD);
-        gfx::textMid(gfx::ellipsize(rows[i].value, half - 28 - lw - 20, 22, gfx::MONO), M + 28 + lw, cy, 22, rows[i].ok ? DOWN : MUTED,
-                     rows[i].ok ? gfx::MONO : gfx::REGULAR);
+        std::string v = gfx::ellipsize(rows[i].value, half - 28 - lw - 120, 20, gfx::MONO);
+        vx += gfx::textMid(v, vx, cy, 20, rows[i].ok ? DOWN : MUTED, rows[i].ok ? gfx::MONO : gfx::REGULAR) + 14;
+        if (i == 0) {  // the recommended way: a small outlined tag
+          const float tb = 2 / UI_SCALE, th = 26, tw = roundf((gfx::textWidth("Fastest", 14, gfx::BOLD) + 24) * UI_SCALE) / UI_SCALE;
+          float tx = roundf(vx * UI_SCALE) / UI_SCALE, ty = roundf((cy - th / 2) * UI_SCALE) / UI_SCALE;
+          gfx::rect(tx, ty, tw, th, DOWN, th / 2);
+          gfx::rect(tx + tb, ty + tb, tw - 2 * tb, th - 2 * tb, PANEL, th / 2 - tb);
+          gfx::textMid("Fastest", tx + 12, ty + th / 2, 14, DOWN, gfx::BOLD);
+        } else if (rows[i].ok) gfx::textMid("slower", vx, cy, 14, MUTED);
       }
       gfx::rect(rx, y, half, h, PANEL, 14, 1, LINE);
       const char* pwText = locked ? "Password protected" : "No password: anyone on your network can open it (press \xE2\x80\x93 to set one)";
