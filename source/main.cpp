@@ -230,6 +230,58 @@ static std::string ago(double sec) {
   return b;
 }
 
+// ---------------------------------------------------------------- touch
+// On-screen buttons: each frame registers the buttons it draws; a tap (finger
+// down and up without moving much) on one acts as a press of its key, so the
+// key handling below serves buttons and touch alike.
+struct TouchBtn { float x, y, w, h; u64 key; };
+static std::vector<TouchBtn> g_btns, g_btnsPrev;  // this frame's; last frame's (what a tap hits)
+static float g_touchX = -1, g_touchY = -1;         // finger now, in UI units (-1: none)
+
+static float buttonWidth(const std::string& key, const std::string& label, float size) {
+  return (key.empty() ? 0 : gfx::textWidth(key, size, gfx::BOLD) + 12) + gfx::textWidth(label, size) + 32;
+}
+// Draws a button (key glyph, then label) and registers it.
+static void touchButton(float x, float y, float w, float h, const std::string& key, const std::string& label, u64 code, float size = 17) {
+  using gfx::rgb;
+  bool pressed = g_touchX >= x && g_touchX < x + w && g_touchY >= y && g_touchY < y + h;
+  gfx::rect(x, y, w, h, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), 10, 1, pressed ? rgb(0xff3b4f) : rgb(0x3a3f4a));
+  float tx = x + 16, ty = y + (h - size) / 2 - 1;
+  if (!key.empty()) { gfx::text(key, tx, ty, size, rgb(0xff3b4f), gfx::BOLD); tx += gfx::textWidth(key, size, gfx::BOLD) + 12; }
+  gfx::text(label, tx, ty, size, rgb(0xe8eaee));
+  g_btns.push_back({x, y, w, h, code});
+}
+
+// Turns the touch screen into key presses on the buttons of the last frame.
+// Its coordinates are taken as 1280x720 until one beyond that is seen (the
+// Switch 2 screen may report 1920x1080); the bottom row of buttons is beyond
+// it either way. The first taps are logged to check this.
+struct TouchReader {
+  bool down = false, moved = false, wide = false;
+  float sx = 0, sy = 0, lx = 0, ly = 0;
+  u32 rawX = 0, rawY = 0;
+  int logged = 0;
+  u64 poll() {
+    HidTouchScreenState st{};
+    if (hidGetTouchScreenStates(&st, 1) && st.count > 0) {
+      rawX = st.touches[0].x; rawY = st.touches[0].y;
+      if (rawX > 1280 || rawY > 720) wide = true;
+      float ux = rawX * (float)gfx::UI_W / (wide ? 1920.f : 1280.f), uy = rawY * (float)gfx::UI_H / (wide ? 1080.f : 720.f);
+      if (!down) { down = true; moved = false; sx = ux; sy = uy; }
+      if (fabsf(ux - sx) > 40 || fabsf(uy - sy) > 40) moved = true;
+      lx = ux; ly = uy; g_touchX = ux; g_touchY = uy;
+      return 0;
+    }
+    if (!down) return 0;
+    down = false; g_touchX = g_touchY = -1;
+    if (logged < 10) { logged++; logf("touch: tap at raw %u,%u -> UI %.0f,%.0f (%s)", rawX, rawY, lx, ly, wide ? "1920x1080" : "1280x720"); }
+    if (moved) return 0;
+    for (auto& b : g_btnsPrev)
+      if (lx >= b.x && lx < b.x + b.w && ly >= b.y && ly < b.y + b.h) return b.key;
+    return 0;
+  }
+};
+
 // Help screen (Y): how to use the web page and the command-line client.
 static void drawHelp(const std::string& host, int port) {
   using gfx::rgb;
@@ -270,8 +322,8 @@ static void drawHelp(const std::string& host, int port) {
     else if (l.kind == 2) { gfx::text(gfx::ellipsize(l.s, gfx::UI_W - 2 * M - 30, 16, gfx::MONO), M + 24, y, 16, CODE, gfx::MONO); y += 28; }
     else y += 18;
   }
-  const char* keys = "B / Y  Close";
-  gfx::text(keys, gfx::UI_W - M - gfx::textWidth(keys, 18, gfx::BOLD), gfx::UI_H - 64, 18, TEXT, gfx::BOLD);
+  float bw = buttonWidth("B", "Close", 18);
+  touchButton(gfx::UI_W - M - bw, gfx::UI_H - 82, bw, 44, "B", "Close", HidNpadButton_B, 18);
 }
 
 // Background plugin panel (A on the main screen).
@@ -321,11 +373,12 @@ static void drawPluginPanel(const PluginPanel& st) {
     {"Y", "Uninstall it (transfers then need this app open)", st.installed || st.running},
     {"B", "Close", true},
   };
-  for (auto& a : acts) {
+  const u64 codes[] = {HidNpadButton_A, HidNpadButton_X, HidNpadButton_Y, HidNpadButton_B};
+  for (int i = 0; i < 4; i++) {
+    auto& a = acts[i];
     if (!a.show) continue;
-    gfx::text(a.key, X, y, 22, TEXT, gfx::BOLD);
-    gfx::text(a.what, X + 50, y + 2, 20, TEXT);
-    y += 40;
+    touchButton(X - 8, y, buttonWidth(a.key, a.what, 19) + 8, 44, a.key, a.what, codes[i], 19);
+    y += 54;
   }
   const char* ask = nullptr;
   if (st.stopAsk > 0) ask = "Press X again to stop the background plugin until the console restarts. Transfers in progress are cancelled, and until the restart SW2Transfer must be open to transfer files.";
@@ -450,6 +503,8 @@ int main(int, char**) {
   });
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   PadState pad; padInitializeDefault(&pad);
+  hidInitializeTouchScreen();
+  TouchReader touch;
   // 40 UI units = 50 screen pixels (UI_SCALE 1.25)
   const float ICON = 40;
   gfx::Image* icon = loadIcon((int)(ICON * UI_SCALE + 0.5f), 8 * UI_SCALE);
@@ -474,7 +529,8 @@ int main(int, char**) {
   auto say = [&](const std::string& msg, bool bad, double secs = 5) { toast = msg; toastBad = bad; toastUntil = nowSec() + secs; };
   while (appletMainLoop()) {
     padUpdate(&pad);
-    u64 down = padGetButtonsDown(&pad);
+    g_btnsPrev.swap(g_btns); g_btns.clear();
+    u64 down = padGetButtonsDown(&pad) | touch.poll();
     if (down & HidNpadButton_Plus) break;
     if (pendingStop) {  // stop (and maybe remove) the plugin; serve from here after
       bool del = pendingStop == 2;
@@ -707,7 +763,7 @@ int main(int, char**) {
 
     // Transfers
     y += gh + 20;
-    float th = gfx::UI_H - y - 84;
+    float th = gfx::UI_H - y - 100;
     gfx::rect(M, y, W - 2 * M, th, PANEL, 14, 1, LINE);
     gfx::text("Transfers", M + 24, y + 14, 18, TEXT, gfx::BOLD);
     float ry = y + 50;
@@ -731,7 +787,7 @@ int main(int, char**) {
     }
 
     // Log + footer
-    float ly = gfx::UI_H - 76;
+    float ly = gfx::UI_H - 94;
     for (auto& l : logs) { gfx::text(gfx::ellipsize(l, W - 2 * M, 15, gfx::MONO), M, ly, 15, MUTED, gfx::MONO); ly += 20; }
     if (cancelAsk > 0 && nowSec() - cancelAsk >= 3.0) cancelAsk = 0;
     if (toastUntil > 0 && nowSec() > toastUntil) { toastUntil = 0; toast.clear(); }
@@ -746,15 +802,28 @@ int main(int, char**) {
       gfx::rect((W - aw) / 2, gfx::UI_H - 132, aw, 44, ACCENT, 22);
       gfx::text(ask, (W - aw) / 2 + 24, gfx::UI_H - 122, 20, TEXT, gfx::BOLD);
     }
-    const char* keys = "A  Plugin      \xE2\x80\x93  Password      X  Cancel all      Y  Help      +  Exit";
-    gfx::text(keys, W - M - gfx::textWidth(keys, 18, gfx::BOLD), gfx::UI_H - 34, 18, TEXT, gfx::BOLD);
+    float footerLeft = W - M;
+    {  // buttons: press them, or tap them
+      struct B { const char* key; const char* label; u64 code; } bs[] = {
+        {"A", "Plugin", HidNpadButton_A}, {"\xE2\x80\x93", "Password", HidNpadButton_Minus}, {"X", "Cancel all", HidNpadButton_X},
+        {"Y", "Help", HidNpadButton_Y}, {"+", "Exit", HidNpadButton_Plus}};
+      float bx = W - M;
+      for (int i = 4; i >= 0; i--) {
+        float bw = buttonWidth(bs[i].key, bs[i].label, 16);
+        bx -= bw;
+        touchButton(bx, gfx::UI_H - 52, bw, 38, bs[i].key, bs[i].label, bs[i].code, 16);
+        bx -= 10;
+      }
+      footerLeft = bx;
+    }
     if (viaPlugin)
       snprintf(line, sizeof line, "Background plugin, running for %s: uploaded %s, downloaded %s",
                ago(plUptime).c_str(), human((double)totUp).c_str(), human((double)totDown).c_str());
     else
       snprintf(line, sizeof line, "This session: uploaded %s, downloaded %s   \xC2\xB7   Sockets: %s",
                human((double)totUp).c_str(), human((double)totDown).c_str(), sockMode.empty() ? "unavailable" : sockMode.c_str());
-    gfx::text(line, M, gfx::UI_H - 34, 16, MUTED);
+    gfx::text(gfx::ellipsize(line, footerLeft - M - 16, 16), M, gfx::UI_H - 42, 16, MUTED);
+    if (showHelp || showPanel) g_btns.clear();  // only the overlay's buttons can be tapped
     if (showHelp) drawHelp(host, cfg.httpPort);
     if (showPanel) drawPluginPanel(panel);
     if (showPanel && !toast.empty()) {  // messages from the panel show over it
