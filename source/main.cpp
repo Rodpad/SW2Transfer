@@ -257,7 +257,8 @@ static float buttonWidth(const std::string& key, const std::string& label, float
   return BTN_PAD + (key.empty() ? 0 : badgeSize(size) + BTN_GAP) + gfx::textWidth(label, size) + BTN_PAD;
 }
 // Draws a button (round badge with the key, then the label) and registers it.
-static void touchButton(float x, float y, float w, float h, const std::string& key, const std::string& label, u64 code, float size = 17) {
+static void touchButton(float x, float y, float w, float h, const std::string& key, const std::string& label, u64 code, float size = 17,
+                        bool centred = false) {
   using gfx::rgb;
   // Whole screen pixels, and the outline drawn as a filled shape: a thin
   // border at a fractional position can fall between pixels and vanish on one
@@ -270,6 +271,7 @@ static void touchButton(float x, float y, float w, float h, const std::string& k
   gfx::rect(x, y, w, h, pressed ? rgb(0x4fa3ff) : rgb(0x3a3f4a), 12);
   gfx::rect(x + b, y + b, w - 2 * b, h - 2 * b, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), 12 - b);
   float cx = x + BTN_PAD;
+  if (centred) cx = snap(x + (w - (buttonWidth(key, label, size) - 2 * BTN_PAD)) / 2);  // badge and label in the middle
   if (!key.empty()) {
     float d = badgeSize(size), by = snap(y + (h - d) / 2), ks = size * 0.8f;
     // a blue ring (drawn filled, like the outline) with the key in blue
@@ -910,12 +912,12 @@ int main(int, char**) {
         for (auto& b : bs) total += buttonWidth(b.key, b.label, size);
         if (total <= colW) break;
       }
-      float bx = W - M;
-      for (int i = 4; i >= 0; i--) {
-        float bw = buttonWidth(bs[i].key, bs[i].label, size);
-        bx -= bw;
-        touchButton(bx, btnTop, bw, btnBottom - btnTop, bs[i].key, bs[i].label, bs[i].code, size);
-        bx -= 12;
+      // spanning the log panel exactly: the spare width shared out evenly
+      float extra = std::max(0.0f, colW - total) / 5, bx = rightX;
+      for (int i = 0; i < 5; i++) {
+        float bw = i == 4 ? W - M - bx : buttonWidth(bs[i].key, bs[i].label, size) + extra;
+        touchButton(bx, btnTop, bw, btnBottom - btnTop, bs[i].key, bs[i].label, bs[i].code, size, true);
+        bx += bw + 12;
       }
     }
     if (showHelp || showPanel) g_btns.clear();  // only the overlay's buttons can be tapped
