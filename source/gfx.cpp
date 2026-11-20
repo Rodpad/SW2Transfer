@@ -65,9 +65,11 @@ static const char* VS =
     "layout(location=0) in vec2 pos; layout(location=1) in vec2 uv;\n"
     "uniform vec2 screen; out vec2 vuv; out vec2 vpos;\n"
     "void main(){ vuv = uv; vpos = pos; gl_Position = vec4(pos.x / screen.x * 2.0 - 1.0, 1.0 - pos.y / screen.y * 2.0, 0.0, 1.0); }\n";
-// Rounded rectangle by signed distance, with an inner border.
+// Rounded rectangle by signed distance, with an inner border. highp: on the
+// Switch's GPU mediump is 16-bit, which steps whole pixels past x = 1024 on a
+// 1920-wide screen, so edges and circles on the right half came out jagged.
 static const char* RECT_FS =
-    "#version 300 es\nprecision mediump float;\n"
+    "#version 300 es\nprecision highp float;\n"
     "in vec2 vpos; uniform vec4 rect; uniform float radius; uniform float border; uniform vec4 fill; uniform vec4 bcolor; out vec4 o;\n"
     "void main(){ vec2 c = rect.xy + rect.zw * 0.5; vec2 h = rect.zw * 0.5;\n"
     "  vec2 q = abs(vpos - c) - h + vec2(radius); float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;\n"
