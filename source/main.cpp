@@ -701,6 +701,8 @@ int main(int, char**) {
       // done it stays put, showing the last transfer.
       bool live = speedUp > 0 || speedDown > 0;
       for (auto& x : active) if (x->conns > 0 && !x->copy) live = true;
+      // After a transfer it keeps scrolling until the last bar has gone.
+      for (int i = 0; i < HIST && !live; i++) if (histUp[i] + histDown[i] > 0) live = true;
       if (live) {
         histUp.erase(histUp.begin()); histUp.push_back(speedUp);
         histDown.erase(histDown.begin()); histDown.push_back(speedDown);
@@ -743,22 +745,29 @@ int main(int, char**) {
     std::string host = ip.empty() ? "<switch-ip>" : ip;
     float y = 84;
     const float CW = W - 2 * M;
-    {  // web browser (and FTP)
-      const float h = 128;
-      gfx::rect(M, y, CW, h, PANEL, 14, 1, LINE);
-      gfx::rect(M, y, 6, h, DOWN, 3);
-      gfx::text("Transfer by web browser", M + 28, y + 14, 18, TEXT, gfx::BOLD);
-      gfx::text("http://" + host + ":" + std::to_string(cfg.httpPort), M + 28, y + 44, 30, DOWN, gfx::MONO);
-      const char* hint = "Open on any computer or phone on the same network";
-      gfx::text(hint, W - M - 28 - gfx::textWidth(hint, 16), y + 54, 16, MUTED);
+    {  // how to connect (left half) and who can (right half)
+      const float h = 128, half = (CW - 16) / 2, rx = M + half + 16;
       bool locked = auth::enabled();
+      gfx::rect(M, y, half, h, PANEL, 14, 1, LINE);
+      gfx::rect(M, y, 6, h, DOWN, 3);
+      struct Row { const char* label; std::string value; bool ok; } rows[2] = {
+        {"Transfer by web browser:", "http://" + host + ":" + std::to_string(cfg.httpPort), true},
+        {"Transfer by FTP:", ftpPort ? "ftp://" + host + ":" + std::to_string(ftpPort) : std::string("not available (port 6700 in use)"), ftpPort != 0}};
+      float lw = gfx::textWidth(rows[0].label, 18, gfx::BOLD) + 16;  // values line up after the longer label
+      for (int i = 0; i < 2; i++) {
+        float cy = y + (i == 0 ? 40 : 90);
+        gfx::textMid(rows[i].label, M + 28, cy, 18, TEXT, gfx::BOLD);
+        gfx::textMid(gfx::ellipsize(rows[i].value, half - 28 - lw - 20, 22, gfx::MONO), M + 28 + lw, cy, 22, rows[i].ok ? DOWN : MUTED,
+                     rows[i].ok ? gfx::MONO : gfx::REGULAR);
+      }
+      gfx::rect(rx, y, half, h, PANEL, 14, 1, LINE);
       const char* pwText = locked ? "Password protected" : "No password: anyone on your network can open it (press \xE2\x80\x93 to set one)";
-      gfx::text(pwText, W - M - 28 - gfx::textWidth(pwText, 16, gfx::BOLD), y + 16, 16, locked ? DOWN : MUTED, gfx::BOLD);
-      gfx::text("FTP", M + 28, y + 92, 18, TEXT, gfx::BOLD);
-      std::string ftpText = ftpPort ? "ftp://" + host + ":" + std::to_string(ftpPort) : std::string("not available (port 6700 is in use)");
-      gfx::text(ftpText, M + 80, y + 91, 20, ftpPort ? TEXT : MUTED, ftpPort ? gfx::MONO : gfx::REGULAR);
+      const char* hint = "Open on any computer or phone on the same network";
       const char* ftpHint = locked ? "Any FTP client, passive mode: any user name, the password above" : "Any FTP client, passive mode: any user name and password";
-      gfx::text(ftpHint, W - M - 28 - gfx::textWidth(ftpHint, 16), y + 94, 16, MUTED);
+      float inner = half - 48;
+      gfx::textMid(gfx::ellipsize(pwText, inner, 16, gfx::BOLD), rx + 24, y + 32, 16, locked ? DOWN : TEXT, gfx::BOLD);
+      gfx::textMid(gfx::ellipsize(hint, inner, 16), rx + 24, y + 64, 16, MUTED);
+      gfx::textMid(gfx::ellipsize(ftpHint, inner, 16), rx + 24, y + 96, 16, MUTED);
       y += h + 14;
     }
     {  // terminal
