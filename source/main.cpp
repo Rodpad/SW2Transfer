@@ -320,37 +320,44 @@ static void drawHelp(const std::string& host, int port) {
   gfx::rect(0, 0, gfx::UI_W, gfx::UI_H, rgb(0x111317, 0.97f));
   gfx::rect(M - 16, 20, gfx::UI_W - 2 * (M - 16), gfx::UI_H - 40, rgb(0x1a1d23), 14, 1, rgb(0x2a2e36));
   std::string url = "http://" + host + ":" + std::to_string(port);
-  std::string cmd = "python3 sw2xfer.py --host " + host + " ";
-  struct L { int kind; std::string s; };  // 0 heading, 1 text, 2 code, 3 gap
+  struct L { int kind; std::string s; };  // 0 heading, 1 text, 2 code, 3 gap, 4 table row "what\tcommand"
+  const std::string B = "\xE2\x80\xA2  ", DOT = "   \xC2\xB7   ";
   std::vector<L> lines = {
     {0, "Web browser (no install)"},
-    {1, "1. On a computer or phone on the same network, open  " + url},
-    {1, "2. Click folders to open them. Uploads go into the folder you are in."},
-    {1, "3. Upload files / Upload folder, or drag files and whole folders onto the page (subfolders are kept)."},
-    {1, "4. Click a file to tick it; its Download button saves it. Rows have Rename and Delete; New folder makes a folder."},
-    {1, "5. Connections and Chunk: 8 and 2 MB were fastest in tests. Transfers show their speed live."},
-    {1, "Password: press \xE2\x80\x93 to set, change or remove it. Browsers and the command line then ask for it once every 12 hours."},
-    {1, "6. Cancel all (web page), X twice (here) or the cancel command stops every transfer and copy; unfinished ones are deleted."},
-    {1, "Background plugin (A): serves transfers from startup, also while games run, without this app open. This screen then shows it."},
-    {1, "FTP: any FTP client (FileZilla, Cyberduck, WinSCP...), server " + host + ", port 6700, passive mode. Without a password any login works."},
+    {1, B + "On a computer or phone on the same network, open  " + url},
+    {1, B + "Click a folder to open it; uploads go into the folder you are in. Upload files, Upload folder, or drag them onto the page."},
+    {1, B + "Click a file to tick it. Download saves it (several ticked: one transfer.zip). Rename, Delete and New folder manage files."},
+    {1, B + "Cancel all (web page), X twice (here) or the cancel command stops every transfer and copy; unfinished ones are deleted."},
+    {1, B + "Password: press \xE2\x80\x93 to set, change or remove it. Browsers, FTP and the command line then ask for it."},
+    {1, B + "FTP: any FTP client (FileZilla, Cyberduck, WinSCP...), server " + host + ", port 6700, passive mode."},
+    {1, B + "Background plugin (A): serves transfers from startup, also while games run, without this app open."},
     {3, ""},
     {0, "Command line (Mac, Windows, Linux with Python 3)"},
-    {1, "Get the client from  " + url + "/sw2xfer.py  (or the Help button on the web page). The last path is the destination."},
-    {2, cmd + "upload /SourceFileOrFolder /DestinationPath"},
-    {2, cmd + "download /SourceFileOrFolder /DestinationPath"},
-    {2, cmd + "upload game.iso MyFolder /roms/ps2          several sources: the last path is the destination"},
-    {2, cmd + "download /roms/ps2/game.iso ~/Downloads     folders download whole, subfolders included"},
-    {2, cmd + "ls /path        mkdir /path/new        rm -r /path/old        mv /path/a /path/b        cancel"},
-    {1, "Options: -n 8 connections, --chunk 2M, bench /path/test.bin measures speed (the test file is deleted after)."},
+    {1, "Get sw2xfer.py from  " + url + "/sw2xfer.py  (or Help on the web page). Start every command with:"},
+    {2, "python3 sw2xfer.py --host " + host},
+    {3, ""},
+    {4, "Upload to the Switch\tupload /SourceFileOrFolder /DestinationPath"},
+    {4, "Download from the Switch\tdownload /SourceFileOrFolder /DestinationPath"},
+    {4, "Several items (the last path is the destination)\tupload game.iso MyFolder /roms/ps2"},
+    {4, "List, new folder, delete, move\tls /path" + DOT + "mkdir /path/new" + DOT + "rm -r /path/old" + DOT + "mv /path/a /path/b"},
+    {4, "Stop every transfer\tcancel"},
+    {4, "Files already there (otherwise you are asked)\t--overwrite-existing   or   --skip-existing"},
+    {4, "Speed test (the test file is deleted after)\tbench /path/test.bin"},
   };
   float y = 44;
   gfx::text("Help", M + 8, y, 30, TITLE, gfx::BOLD);
   y += 56;
+  const float X = M + 24, COL = X + 470, WIDTH = gfx::UI_W - 2 * M - 30;
   for (auto& l : lines) {
     if (l.kind == 0) { gfx::text(l.s, M + 8, y, 22, TEXT, gfx::BOLD); y += 38; }
-    else if (l.kind == 1) { gfx::text(gfx::ellipsize(l.s, gfx::UI_W - 2 * M - 30, 17), M + 24, y, 17, MUTED); y += 30; }
-    else if (l.kind == 2) { gfx::text(gfx::ellipsize(l.s, gfx::UI_W - 2 * M - 30, 16, gfx::MONO), M + 24, y, 16, CODE, gfx::MONO); y += 28; }
-    else y += 18;
+    else if (l.kind == 1) { gfx::text(gfx::ellipsize(l.s, WIDTH, 17), X, y, 17, MUTED); y += 30; }
+    else if (l.kind == 2) { gfx::text(l.s, X, y, 18, CODE, gfx::MONO); y += 30; }
+    else if (l.kind == 4) {
+      size_t tab = l.s.find('\t');
+      gfx::text(l.s.substr(0, tab), X, y, 17, TEXT);
+      gfx::text(gfx::ellipsize(l.s.substr(tab + 1), M + 24 + WIDTH - COL, 17, gfx::MONO), COL, y, 17, CODE, gfx::MONO);
+      y += 30;
+    } else y += 12;
   }
   float bw = buttonWidth("B", "Close", 24);
   touchButton(gfx::UI_W - M - bw, gfx::UI_H - 96, bw, 62, "B", "Close", HidNpadButton_B, 24);
