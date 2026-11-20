@@ -77,7 +77,7 @@ static std::string human(double n) {
 // transfers from startup, also while games run. When it is running, this app
 // does not start a server of its own: it shows the plugin's activity (polled
 // from 127.0.0.1:6967/api/status) and passes on Password, Cancel all and Stop.
-// The panel (R) installs, updates, stops and removes it.
+// The panel (A) installs, updates, stops and removes it.
 static const char* PLUGIN_DIR = "sdmc:/kaihen/plugins";
 static const char* PLUGIN_PATH = "sdmc:/kaihen/plugins/sw2transfer.nso";
 static const char* PLUGIN_BUNDLED = "romfs:/plugin/sw2transfer.nso";
@@ -249,7 +249,7 @@ static void drawHelp(const std::string& host, int port) {
     {1, "5. Connections and Chunk: 8 and 2 MB were fastest in tests. Transfers show their speed live."},
     {1, "Password: press \xE2\x80\x93 to set, change or remove it. Browsers and the command line then ask for it once every 12 hours."},
     {1, "6. Cancel all (web page), X twice (here) or the cancel command stops every transfer and copy; unfinished ones are deleted."},
-    {1, "Background plugin (R): serves transfers from startup, also while games run, without this app open. This screen then shows it."},
+    {1, "Background plugin (A): serves transfers from startup, also while games run, without this app open. This screen then shows it."},
     {1, "FTP: any FTP client (FileZilla, Cyberduck, WinSCP...), server " + host + ", port 6700, passive mode. Without a password any login works."},
     {3, ""},
     {0, "Command line (Mac, Windows, Linux with Python 3)"},
@@ -274,7 +274,7 @@ static void drawHelp(const std::string& host, int port) {
   gfx::text(keys, gfx::UI_W - M - gfx::textWidth(keys, 18, gfx::BOLD), gfx::UI_H - 64, 18, TEXT, gfx::BOLD);
 }
 
-// Background plugin panel (R).
+// Background plugin panel (A on the main screen).
 struct PluginPanel {
   bool running = false, installed = false, upToDate = false, stoppedHere = false;
   std::string version, sockets;
@@ -492,7 +492,9 @@ int main(int, char**) {
       else if (del) say("Background plugin uninstalled. Keep SW2Transfer open to transfer files.", false, 7);
       else say("Background plugin stopped until the console restarts. Keep SW2Transfer open to transfer files.", false, 7);
     }
-    if ((down & HidNpadButton_R) && !showHelp) { showPanel = !showPanel; panel.stopAsk = panel.removeAsk = 0; if (showPanel) refreshPanel(); down = 0; }
+    // A opens the panel; inside it A installs or updates and B closes it (this
+    // press is used up, so opening never installs).
+    if ((down & HidNpadButton_A) && !showHelp && !showPanel) { showPanel = true; panel.stopAsk = panel.removeAsk = 0; refreshPanel(); down = 0; }
     if (showPanel) {  // the panel has the buttons
       double now = nowSec();
       if (down & HidNpadButton_B) { showPanel = false; panel.stopAsk = panel.removeAsk = 0; }
@@ -744,7 +746,7 @@ int main(int, char**) {
       gfx::rect((W - aw) / 2, gfx::UI_H - 132, aw, 44, ACCENT, 22);
       gfx::text(ask, (W - aw) / 2 + 24, gfx::UI_H - 122, 20, TEXT, gfx::BOLD);
     }
-    const char* keys = "\xE2\x80\x93  Password      X  Cancel all      R  Plugin      Y  Help      +  Exit";
+    const char* keys = "A  Plugin      \xE2\x80\x93  Password      X  Cancel all      Y  Help      +  Exit";
     gfx::text(keys, W - M - gfx::textWidth(keys, 18, gfx::BOLD), gfx::UI_H - 34, 18, TEXT, gfx::BOLD);
     if (viaPlugin)
       snprintf(line, sizeof line, "Background plugin, running for %s: uploaded %s, downloaded %s",

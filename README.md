@@ -63,13 +63,14 @@ stops FTP transfers too.
 
 SW2Transfer can also run as a kaiHEN plugin: it then serves from the moment the
 console starts, also while a game is running, without the app open. Install it
-from the app: press **R**, then **A**, and restart the console.
+from the app: press **A** to open the plugin panel, **A** again to install, and
+restart the console.
 
 - While the plugin runs, opening the app does not start a second server: the
   app shows the plugin's activity (a green "Background plugin running" pill),
   and Password, Cancel all and Help work as usual. The web page shows a
   **Background** badge, and `sw2xfer.py info` says so.
-- In the app's plugin panel (R): **A** installs or updates it, **X** stops it
+- In the app's plugin panel (A): **A** installs or updates it, **X** stops it
   until the console restarts (the app then serves while it is open), **Y**
   uninstalls it (stops it and deletes `/kaihen/plugins/sw2transfer.nso`). Stop
   and uninstall cancel transfers that go through it.
