@@ -60,7 +60,8 @@ void logf(const char* fmt, ...) {
   std::lock_guard<std::mutex> lk(logMu);
   logLines.push_back(b);
   while (logLines.size() > 200) logLines.pop_front();
-  if (logFile) { fprintf(logFile, "%s\n", b); fflush(logFile); }
+  static const double t0 = nowSec();
+  if (logFile) { fprintf(logFile, "[%8.1f] %s\n", nowSec() - t0, b); fflush(logFile); }  // seconds since start
 #ifndef __SWITCH__
   fprintf(stderr, "%s\n", b);
 #endif
@@ -482,18 +483,55 @@ static std::atomic<unsigned> rr{0};
 
 struct Listener : Conn {
   ConnFactory make;
-  int pollfds(pollfd* o) override { o[0] = {fd, (short)(g_connections < MAX_CONNECTIONS ? POLLIN : 0), 0}; return 1; }
+  int port = 0;
+  double retryAt = 0;            // no socket: when to try again
+  double noticeSince = 0; int notices = 0;  // error reports from poll on a socket that still works
+  int pollfds(pollfd* o) override {
+    if (fd < 0) return 0;
+    o[0] = {fd, (short)(g_connections < MAX_CONNECTIONS ? POLLIN : 0), 0};
+    return 1;
+  }
+  void tick() override {
+    if (fd >= 0 || nowSec() < retryAt) return;
+    std::string err;
+    fd = listenOn(port, err);
+    if (fd >= 0) logf("port %d: listening again", port);
+    else retryAt = nowSec() + 2;
+  }
+  void adopt(int c) {
+    setNonBlocking(c); tuneSocket(c);
+    Conn* conn = make(c);
+    if (!conn) { close(c); return; }
+    g_connections++;
+    threads[rr++ % threads.size()]->add(conn);
+  }
+  // poll can report an error on a listening socket that still works (seen on
+  // the console when another app starts or exits). Check before acting, and
+  // then replace only this socket: connections and transfers carry on.
   void handle(const pollfd* in, int) override {
-    if (in[0].revents & (POLLERR | POLLHUP | POLLNVAL)) { g_listenerBroken = true; return; }
-    if (!(in[0].revents & POLLIN)) return;
+    short r = in[0].revents;
+    if (r & (POLLERR | POLLHUP | POLLNVAL)) {
+      int soerr = 0; socklen_t sl = sizeof soerr;
+      if (!(r & POLLNVAL)) getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &sl);
+      int c = (r & POLLNVAL) ? -1 : accept(fd, nullptr, nullptr), e = errno;
+      double t = nowSec();
+      if (t - noticeSince > 1) { noticeSince = t; notices = 0; }
+      bool works = c >= 0 || e == EAGAIN || e == EWOULDBLOCK;
+      if (works && ++notices < 20) {  // (20 a second would be a busy loop: then replace it)
+        if (notices == 1) logf("port %d: poll reported 0x%x (socket error %d); the socket still works", port, r, soerr);
+        if (c >= 0) adopt(c);
+        return;
+      }
+      if (c >= 0) adopt(c);
+      logf("port %d: listening socket failed (poll 0x%x, socket error %d, accept errno %d); opening a new one", port, r, soerr, e);
+      close(fd); fd = -1; retryAt = 0;
+      return;
+    }
+    if (!(r & POLLIN)) return;
     while (g_connections < MAX_CONNECTIONS) {
       int c = accept(fd, nullptr, nullptr);
       if (c < 0) return;
-      setNonBlocking(c); tuneSocket(c);
-      Conn* conn = make(c);
-      if (!conn) { close(c); continue; }
-      g_connections++;
-      threads[rr++ % threads.size()]->add(conn);
+      adopt(c);
     }
   }
 };
@@ -535,9 +573,12 @@ static void netLoop(NetThread* t, int index) {
       } else i++;
     }
   }
+  // Connections dropped by the stop leave the count too (or after a few
+  // restarts mid-transfer it stays above MAX_CONNECTIONS and nobody gets in).
+  for (auto& c : t->conns) if (!dynamic_cast<Listener*>(c.get())) g_connections--;
   t->conns.clear();
   std::lock_guard<std::mutex> lk(t->mu);
-  for (auto c : t->incoming) delete c;
+  for (auto c : t->incoming) { if (!dynamic_cast<Listener*>(c)) g_connections--; delete c; }
   t->incoming.clear();
 }
 
@@ -553,7 +594,7 @@ bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err, Co
   PSTEP("start: disk threads started");
   netQuit = false;
   for (int i = 0; i < cfg.netThreads; i++) threads.push_back(new NetThread());
-  auto l2 = new Listener(); l2->fd = fHttp; l2->make = http;
+  auto l2 = new Listener(); l2->fd = fHttp; l2->make = http; l2->port = cfg.httpPort;
   threads[0]->add(l2);
   g_ftpPort = 0;
   if (ftp) {
@@ -561,7 +602,7 @@ bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err, Co
     int fFtp = listenOn(cfg.ftpPort, ferr);
     if (fFtp < 0) logf("FTP port %d: %s (FTP off)", cfg.ftpPort, ferr.c_str());
     else {
-      auto lf = new Listener(); lf->fd = fFtp; lf->make = ftp;
+      auto lf = new Listener(); lf->fd = fFtp; lf->make = ftp; lf->port = cfg.ftpPort;
       threads[threads.size() > 1 ? 1 : 0]->add(lf);
       g_ftpPort = cfg.ftpPort;
     }

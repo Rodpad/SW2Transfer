@@ -31,5 +31,15 @@ int main(int argc, char** argv) {
   std::string err;
   if (!serverStart(cfg, makeHttpConn, err, makeFtpConn)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
   logf("serving %s: HTTP %d, FTP %d", argv[1], cfg.httpPort, g_ftpPort.load());
-  for (;;) { std::this_thread::sleep_for(std::chrono::seconds(1)); vfs::reap(); transfersActive(5); }
+  // SW2T_RESTART_MS=n: stop and start the server every n ms (the plugin's
+  // restart after a listening-socket failure), to test that path under load.
+  int restartMs = getenv("SW2T_RESTART_MS") ? atoi(getenv("SW2T_RESTART_MS")) : 0;
+  for (int n = 0;; n++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(restartMs ? restartMs : 1000));
+    vfs::reap(); transfersActive(5);
+    if (restartMs) {
+      serverStop();
+      if (!serverStart(cfg, makeHttpConn, err, makeFtpConn)) fprintf(stderr, "restart %d: %s\n", n, err.c_str());
+    }
+  }
 }
