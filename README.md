@@ -1,7 +1,11 @@
 # SW2Transfer
 
 Multi-connection file transfer and file management server for the Switch 2
-(hbmenu under kaiHEN).
+(hbmenu under kaiHEN), with three ways in: a **web page** (nothing to install),
+a **command-line client** and **FTP**. It can also run as a **background
+plugin**, so transfers work from the moment the console starts, even while a
+game is running, without the app open.
+
 One file can be read or written by many TCP connections at once, each moving a
 different byte range, which is much faster than a single stream.
 
@@ -17,12 +21,18 @@ SW2Transfer is about 5 times faster than FTP. Before these tests, the most I had
 ever seen over FTP was 8.8 MB/s. All measured with a Mac and the Switch 2 both
 on Wi-Fi, moving a 256 MB file (every transfer checked byte for byte).
 
+SW2Transfer's own FTP server (port 6700) moved a 200 MB file at about 28 MB/s up
+and 19 MB/s down, around 3 times kaiHEN's ftpd, though the web page and the
+command line are faster still. The background plugin, which serves while the
+app is closed, moved a 200 MB file at 47-51 MB/s up and 40-46 MB/s down.
+
 Many small files (100 typical emulator files: saves, configs, box art and ROMs,
 21.6 MB in all):
 
 | | Time | Speed |
 |---|---|---|
-| **SW2Transfer 1.4.3** | **0.9 s** | **23 MB/s** |
+| **SW2Transfer (app)** | **0.9 s** | **23 MB/s** |
+| SW2Transfer (background plugin) | 1.2 s | 18 MB/s |
 | SW2Transfer 1.4.0 | 3.0 s | 7.2 MB/s |
 | FTP (kaiHEN ftpd) | 3.9 s | 5.5 MB/s |
 
@@ -34,16 +44,50 @@ connections at every size from 256 KB to 64 MB.
 ## Install
 
 Copy `sw2transfer.nro` to `sdmc:/switch/sw2transfer/` and launch it
-from hbmenu. The screen shows the console's address, live speed, and every
-file in flight with its connection count. The console stays awake while the
-app is open.
+from hbmenu (or install it from BrewStore). The screen shows the web and FTP
+addresses, live speed, every file in flight (and whether it came by web page,
+command line or FTP) and a log. The console stays awake while the app is open.
 
 | Button | Action |
 |---|---|
+| A | Background plugin: install, update, stop or uninstall it |
 | − | Set, change or remove the password |
 | X (twice) | Cancel all transfers and copies |
 | Y | Help |
 | + | Exit |
+
+Every button is also on screen and can be tapped.
+
+## Background plugin
+
+The background plugin is SW2Transfer without the screen, running as a kaiHEN
+plugin. kaiHEN starts it when the console starts, so the web page, the
+command line and FTP are always available: no need to open the app first,
+and transfers keep working while a game is running.
+
+- **Install it from the app:** press **A** to open the plugin panel, then **A**
+  again, and restart the console (kaiHEN starts plugins only at startup). The
+  plugin travels inside the app, so there is nothing else to download.
+- **Same address, same password, same speed tricks:** web page, command line
+  and FTP on the usual ports, with the multi-connection transfers, 4 files at
+  once and Cancel all.
+- **The app becomes its screen:** while the plugin runs, opening the app does
+  not start a second server. It shows the plugin's transfers, speed and log
+  (and a green "Background plugin running" pill), and Password, Cancel all and
+  Help work as usual. The web page shows a **Background** badge, and
+  `sw2xfer.py info` says so too.
+- **Updating:** a new app carries the matching plugin. The plugin panel shows
+  the installed version and, when the app has a newer one, "An updated plugin
+  is available": press **A**, then restart.
+- **Stop** (X in the panel) stops it until the console restarts; **Uninstall**
+  (Y) stops it and deletes it. Both cancel transfers going through it; from
+  then on, SW2Transfer must be open to transfer files.
+- It uses somewhat less memory than the app (a 64 MB heap, half the app's
+  socket pool, 12 connections), so small files move a little slower.
+- Its log is `/switch/sw2transfer/plugin-log.txt` (readable once it stops);
+  kaiHEN reports whether it started in `/kaihen/plugin-status.txt`. If the
+  console ever fails to start with it, delete `/kaihen/plugins/sw2transfer.nso`
+  from the SD card.
 
 ## FTP
 
@@ -58,27 +102,6 @@ files at once (FileZilla) or one file in parts (`lftp -e "pget -n 8 ..."`, or
 `mirror -P` for folders) get the multi-connection speed: `REST` works for both
 downloads and uploads, so parts can be written at their offsets. Cancel all
 stops FTP transfers too.
-
-## Background plugin (experimental)
-
-SW2Transfer can also run as a kaiHEN plugin: it then serves from the moment the
-console starts, also while a game is running, without the app open. Install it
-from the app: press **A** to open the plugin panel, **A** again to install, and
-restart the console.
-
-- While the plugin runs, opening the app does not start a second server: the
-  app shows the plugin's activity (a green "Background plugin running" pill),
-  and Password, Cancel all and Help work as usual. The web page shows a
-  **Background** badge, and `sw2xfer.py info` says so.
-- In the app's plugin panel (A): **A** installs or updates it, **X** stops it
-  until the console restarts (the app then serves while it is open), **Y**
-  uninstalls it (stops it and deletes `/kaihen/plugins/sw2transfer.nso`). Stop
-  and uninstall cancel transfers that go through it.
-- It uses somewhat less memory than the app (a 64 MB heap, half the app's
-  socket pool, 12 connections).
-- Its log is `/switch/sw2transfer/plugin-log.txt`; kaiHEN reports whether it
-  started in `/kaihen/plugin-status.txt`. If the console ever fails to start
-  with it, delete `/kaihen/plugins/sw2transfer.nso` from the SD card.
 
 ## Password protection
 
@@ -172,17 +195,20 @@ python3 sw2xfer.py --host <switch-ip> mv /path/a /path/b
 
 | Request | Effect |
 |---|---|
-| `GET /api/info` | name, version, free bytes |
+| `GET /api/info` | name, version, free bytes, password on/off, FTP port; `background: true` from the plugin |
 | `GET /api/list?path=/x` | folder listing |
 | `GET /dl/<path>` (+ `Range: bytes=a-b`) | file or a range of it (206) |
 | `POST /api/create?path=&size=` | create or replace a file, preallocated |
-| `PUT /ul/<path>?offset=N` | write the body at offset N (no truncation) |
+| `PUT /ul/<path>?offset=N` | write the body at offset N (no truncation); without `offset`, create or replace the file with the body |
 | `POST /api/mkdir?path=`, `/api/delete?path=[&recursive=1]`, `/api/rename?from=&to=` | rename/move never replaces |
 | `POST /api/copy?from=&to=` | background copy of a file or folder; progress at `GET /api/jobs` |
 | `POST /api/login` (header `X-SW2-Password`, URL-encoded) | returns a 12-hour token and sets the `sw2t` cookie |
 | `POST /api/logout` | clears the cookie |
 | `POST /api/cancel` | cancel all transfers and copies |
-| `GET /api/screen` | PNG of the Switch screen (from memory, nothing saved) |
+| `GET /api/screen` | PNG of the Switch screen (from memory, nothing saved; app only) |
+| `GET /api/status` | totals, transfers and recent log lines, tab-separated (what the app's screen shows) |
+| `GET /api/speed?bytes=N`, `PUT /api/speed` | network speed test from and to memory (no SD card access) |
+| `POST /api/reload`, `POST /api/stop` | from the console itself only: re-read the password; stop the plugin until restart |
 | `GET /sw2xfer.py`, `/favicon.png` | the client script, the app icon |
 
 With a password set, every request except the page, its icon, the client
