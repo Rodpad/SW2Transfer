@@ -46,6 +46,7 @@ bool inUse(const std::string& path);  // a connection or disk job still holds a 
 struct Entry { std::string name; bool dir; int64_t size; int64_t created = 0, modified = 0; };  // times: POSIX seconds, 0 = unknown
 enum Kind { NONE = 0, FILE_ = 1, DIR_ = 2 };
 Kind stat(const std::string& path, int64_t* size = nullptr);
+int64_t modifiedTime(const std::string& path);  // POSIX seconds, 0 if unknown
 bool list(const std::string& path, std::vector<Entry>& out, std::string& err);
 bool mkdir(const std::string& path, std::string& err);
 bool mkdirs(const std::string& path);  // with parents; true if it exists afterwards

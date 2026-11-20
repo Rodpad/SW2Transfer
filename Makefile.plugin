@@ -33,7 +33,7 @@ LDFLAGS  := -specs=$(LIBNX)/switch.specs -g $(ARCH) -Wl,--gc-sections -Wl,-Map,$
 LIBS     := -lkaihen_plugin -lounce_core
 LIBDIRS  := -L$(PORTLIBS_SWITCH2)/lib -L$(LIBNX)/lib
 
-SRCS     := source/net.cpp source/http.cpp source/vfs.cpp source/ops.cpp source/auth.cpp plugin/plugin_main.cpp
+SRCS     := source/net.cpp source/http.cpp source/ftp.cpp source/vfs.cpp source/ops.cpp source/auth.cpp plugin/plugin_main.cpp
 OFILES   := $(patsubst %.cpp,$(BUILD)/%.o,$(SRCS)) $(BUILD)/assets.o
 ASSETS   := romfs/web/index.html romfs/web/favicon.png tools/sw2xfer.py
 

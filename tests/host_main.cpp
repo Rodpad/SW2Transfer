@@ -12,9 +12,10 @@
 std::string g_webPage, g_clientScript, g_favicon;
 const char* g_appVersion = "host";
 Conn* makeHttpConn(int fd);
+Conn* makeFtpConn(int fd);
 
 int main(int argc, char** argv) {
-  if (argc < 2) { fprintf(stderr, "usage: %s <root> [httpPort]\n", argv[0]); return 1; }
+  if (argc < 2) { fprintf(stderr, "usage: %s <root> [httpPort [ftpPort]]\n", argv[0]); return 1; }
   signal(SIGPIPE, SIG_IGN);
   vfs::init(argv[1]);
   std::ifstream w("romfs/web/index.html"); std::stringstream ss; ss << w.rdbuf(); g_webPage = ss.str();
@@ -25,8 +26,9 @@ int main(int argc, char** argv) {
   if (const char* pw = getenv("SW2T_PASSWORD")) auth::setPassword(pw);
   ServerConfig cfg;
   if (argc > 2) cfg.httpPort = atoi(argv[2]);
+  if (argc > 3) cfg.ftpPort = atoi(argv[3]);
   std::string err;
-  if (!serverStart(cfg, makeHttpConn, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
-  logf("serving %s: HTTP %d", argv[1], cfg.httpPort);
+  if (!serverStart(cfg, makeHttpConn, err, makeFtpConn)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+  logf("serving %s: HTTP %d, FTP %d", argv[1], cfg.httpPort, g_ftpPort.load());
   for (;;) { std::this_thread::sleep_for(std::chrono::seconds(1)); vfs::reap(); transfersActive(5); }
 }

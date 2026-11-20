@@ -94,7 +94,7 @@ bool takeTransferSlot() {
 // GET /api/status: what the app's screen shows, for the app running as a
 // screen for the background plugin. One record per line, tab-separated, free
 // text last (tabs and newlines in it become spaces):
-//   S version background bytesUp bytesDown connections uptimeSeconds sockets
+//   S version background bytesUp bytesDown connections uptimeSeconds ftpPort sockets
 //   T id up copy cancelled bytes total conns peakConns startedAgo activeAgo path
 //   L logLine
 std::string statusText() {
@@ -106,8 +106,8 @@ std::string statusText() {
 #else
   const int background = 0;
 #endif
-  snprintf(b, sizeof b, "S\t%s\t%d\t%lld\t%lld\t%d\t%.0f\t", g_appVersion, background, (long long)g_bytesUp.load(),
-           (long long)g_bytesDown.load(), g_connections.load(), g_startedAt > 0 ? t - g_startedAt : 0.0);
+  snprintf(b, sizeof b, "S\t%s\t%d\t%lld\t%lld\t%d\t%.0f\t%d\t", g_appVersion, background, (long long)g_bytesUp.load(),
+           (long long)g_bytesDown.load(), g_connections.load(), g_startedAt > 0 ? t - g_startedAt : 0.0, g_ftpPort.load());
   std::string out = b + clean(g_sockMode) + "\n";
   for (auto& x : transfersActive(8.0)) {
     snprintf(b, sizeof b, "T\t%llu\t%d\t%d\t%d\t%lld\t%lld\t%d\t%d\t%.2f\t%.2f\t", (unsigned long long)x->id, x->upload ? 1 : 0,
@@ -441,7 +441,7 @@ struct HttpConn : Conn {
     if (reqPath == "/api/info") {
       int64_t fr = vfs::freeSpace();
       respond(200, "application/json", std::string("{\"name\":\"SW2Transfer\",\"version\":") + jsonStr(g_appVersion) + ",\"free\":" + std::to_string(fr) +
-                                             ",\"auth\":" + (auth::enabled() ? "true" : "false") +
+                                             ",\"auth\":" + (auth::enabled() ? "true" : "false") + ",\"ftp\":" + std::to_string(g_ftpPort.load()) +
 #ifdef SW2_PLUGIN
                                              ",\"background\":true" +
 #endif

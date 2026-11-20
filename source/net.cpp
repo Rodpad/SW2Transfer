@@ -78,6 +78,7 @@ std::atomic<int> g_connections{0};
 const int MAX_CONNECTIONS = SW2_MAX_CONNECTIONS;
 std::atomic<bool> g_listenerBroken{false};
 std::atomic<bool> g_stopRequested{false};
+std::atomic<int> g_ftpPort{0};
 std::string g_sockMode;
 double g_startedAt = 0;
 ScreenGrab g_screen;
@@ -539,7 +540,7 @@ static void netLoop(NetThread* t, int index) {
   t->incoming.clear();
 }
 
-bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err) {
+bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err, ConnFactory ftp) {
   PSTEP("start: opening port %d", cfg.httpPort);
   int fHttp = listenOn(cfg.httpPort, err);
   if (fHttp < 0) { err = "HTTP port " + std::to_string(cfg.httpPort) + ": " + err; return false; }
@@ -553,6 +554,17 @@ bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err) {
   for (int i = 0; i < cfg.netThreads; i++) threads.push_back(new NetThread());
   auto l2 = new Listener(); l2->fd = fHttp; l2->make = http;
   threads[0]->add(l2);
+  g_ftpPort = 0;
+  if (ftp) {
+    std::string ferr;
+    int fFtp = listenOn(cfg.ftpPort, ferr);
+    if (fFtp < 0) logf("FTP port %d: %s (FTP off)", cfg.ftpPort, ferr.c_str());
+    else {
+      auto lf = new Listener(); lf->fd = fFtp; lf->make = ftp;
+      threads[threads.size() > 1 ? 1 : 0]->add(lf);
+      g_ftpPort = cfg.ftpPort;
+    }
+  }
   for (int i = 0; i < (int)threads.size(); i++) {
     PSTEP("start: starting network thread %d", i);
     NetThread* nt = threads[i];
@@ -563,6 +575,7 @@ bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err) {
 }
 void serverStop() {
   netQuit = true;
+  g_ftpPort = 0;
   for (auto t : threads) { t->th.join(); delete t; }
   threads.clear();
   diskStop();

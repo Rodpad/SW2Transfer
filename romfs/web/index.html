@@ -185,11 +185,13 @@ h2 { font-size: 14px; margin: 0; }
     <li><b>Download selected</b> saves one ticked file as it is; several items, or folders (with everything in them), come as one <code>transfer.zip</code>. A file's own <b>Download</b> button always saves just that file. A zip is limited to 1.5 GB, since the browser builds it in memory; past that the page offers to download the files one by one instead (into Downloads, without their folders), or, when the selection has more than one folder, points you to the command-line client (it keeps folders and has no limit) or FTP.</li>
   </ul>
   <h3>Speed settings</h3>
-  <p><b>Connections</b> is how many connections share each file; <b>Chunk</b> is the piece each one moves at a time. 8 connections with 2 MB chunks were fastest in tests; more than 8 tends to slow downloads.</p>
+  <p><b>Connections</b> is how many connections are used in all: up to 4 files move at once, and spare connections help big files. <b>Chunk</b> is the piece each one moves at a time. 8 connections with 2 MB chunks were fastest in tests.</p>
   <h3>Command-line client (Mac, Windows, Linux)</h3>
   <p>Needs Python 3. <a href="/sw2xfer.py" download>Download sw2xfer.py</a>, then run it from the folder you saved it in. The last path is always the destination.</p>
   <pre><code id="helpCmds"></code></pre>
   <p>Options: <code>-n 8</code> connections, <code>--chunk 2M</code> chunk size, <code>bench /path/test.bin</code> measures upload and download speed (the test file is deleted afterwards).</p>
+  <h3>FTP</h3>
+  <p id="ftpHelp">Any FTP client works (FileZilla, Cyberduck, WinSCP, lftp&hellip;): server <code class="ftpHost"></code>, port <code class="ftpPort">6700</code>, passive mode. Without a password any user name and password are accepted; with one, use the SW2Transfer password with any user name (FTP sends it unencrypted). Clients that move several files at once, or one file in parts (<code>lftp pget</code>), get the multi-connection speed too.</p>
 </div></dialog>
 <script>
 "use strict";
@@ -911,7 +913,12 @@ async function pollCopies() {
 $("logout").onclick = async () => { await fetch("/api/logout", { method: "POST" }).catch(() => {}); location.reload(); };
 // The login box cannot be dismissed with Esc: nothing works without it.
 $("loginDlg").addEventListener("cancel", (e) => e.preventDefault());
-api("GET", "/api/info", {}).then((j) => { $("logout").hidden = !j.auth; $("bgBadge").hidden = !j.background; }).catch(() => {});
+api("GET", "/api/info", {}).then((j) => {
+  $("logout").hidden = !j.auth; $("bgBadge").hidden = !j.background;
+  document.querySelectorAll(".ftpHost").forEach((e) => { e.textContent = location.hostname; });
+  if (j.ftp) document.querySelectorAll(".ftpPort").forEach((e) => { e.textContent = j.ftp; });
+  else $("ftpHelp").textContent = "FTP is not available right now: port 6700 is in use on the Switch.";
+}).catch(() => {});
 refresh();
 </script>
 </body>

@@ -45,6 +45,20 @@ app is open.
 | Y | Help |
 | + | Exit |
 
+## FTP
+
+Any FTP client (FileZilla, Cyberduck, WinSCP, lftp...) can connect to the
+Switch on port **6700**, passive mode, from the app or the background plugin
+(kaiHEN's own ftpd plugin keeps port 5000). Without a password any user name
+and password are accepted; with one, use the SW2Transfer password with any
+user name. FTP sends it unencrypted, unlike the web page's sign-in.
+
+FTP uses the same file layer as the web page, so clients that move several
+files at once (FileZilla) or one file in parts (`lftp -e "pget -n 8 ..."`, or
+`mirror -P` for folders) get the multi-connection speed: `REST` works for both
+downloads and uploads, so parts can be written at their offsets. Cancel all
+stops FTP transfers too.
+
 ## Background plugin (experimental)
 
 SW2Transfer can also run as a kaiHEN plugin: it then serves from the moment the

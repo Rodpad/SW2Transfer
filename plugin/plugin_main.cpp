@@ -19,6 +19,7 @@
 std::string g_webPage, g_clientScript, g_favicon;
 const char* g_appVersion = APP_VERSION;
 Conn* makeHttpConn(int fd);
+Conn* makeFtpConn(int fd);
 
 // Embedded copies of romfs/web (the plugin has no romfs); see tools/embed_assets.py.
 extern const unsigned char asset_index_html[], asset_favicon_png[], asset_sw2xfer_py[];
@@ -142,7 +143,7 @@ int main(int, char**) {
   for (;;) {
     if (!serving) {
       std::string err;
-      serving = serverStart(cfg, makeHttpConn, err);
+      serving = serverStart(cfg, makeHttpConn, err, makeFtpConn);
       if (serving) { logf("serving: HTTP %d", cfg.httpPort); lastErr.clear(); }
       else {
         if (err != lastErr) logf("cannot start yet: %s", err.c_str());  // e.g. no network yet, or the app has the port

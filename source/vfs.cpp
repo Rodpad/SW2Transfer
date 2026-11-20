@@ -88,6 +88,10 @@ Kind stat(const std::string& path, int64_t* sz) {
   }
   return FILE_;
 }
+int64_t modifiedTime(const std::string& path) {
+  FsTimeStampRaw ts; memset(&ts, 0, sizeof ts); FsPath p(path);
+  return R_SUCCEEDED(fsFsGetFileTimeStampRaw(sd, p.p, &ts)) && ts.is_valid ? (int64_t)ts.modified : 0;
+}
 bool list(const std::string& path, std::vector<Entry>& out, std::string& err) {
   FsDir d; FsPath p(path);
   Result rc = fsFsOpenDirectory(sd, p.p, FsDirOpenMode_ReadDirs | FsDirOpenMode_ReadFiles, &d);
@@ -173,6 +177,10 @@ Kind stat(const std::string& path, int64_t* sz) {
   if (S_ISDIR(st.st_mode)) return DIR_;
   if (sz) *sz = st.st_size;
   return FILE_;
+}
+int64_t modifiedTime(const std::string& path) {
+  struct stat st;
+  return ::stat(real(path).c_str(), &st) == 0 ? (int64_t)st.st_mtime : 0;
 }
 bool list(const std::string& path, std::vector<Entry>& out, std::string& err) {
   DIR* d = opendir(real(path).c_str());

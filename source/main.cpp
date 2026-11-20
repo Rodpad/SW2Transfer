@@ -25,6 +25,7 @@
 std::string g_webPage, g_clientScript, g_favicon;
 const char* g_appVersion = APP_VERSION;
 Conn* makeHttpConn(int fd);
+Conn* makeFtpConn(int fd);
 
 static const char* DATA_DIR = "sdmc:/switch/sw2transfer";
 
@@ -120,6 +121,7 @@ struct PluginView {
   bool ok = false;     // the last poll was answered
   int refused = 0;     // polls in a row that found nothing listening
   std::string version, sockets;
+  int ftpPort = 0;
   double uptime = 0, polledAt = 0;
   int64_t up = 0, down = 0;
   int conns = 0;
@@ -158,10 +160,10 @@ static void pollPlugin(PluginView& v) {
     p = e + 1;
     if (line.size() < 2) continue;
     if (line[0] == 'S') {
-      auto f = splitTabs(line, 8);
-      if (f.size() != 8) continue;
+      auto f = splitTabs(line, 9);
+      if (f.size() != 9) continue;
       v.version = f[1]; v.up = atoll(f[3].c_str()); v.down = atoll(f[4].c_str());
-      v.conns = atoi(f[5].c_str()); v.uptime = atof(f[6].c_str()); v.sockets = f[7];
+      v.conns = atoi(f[5].c_str()); v.uptime = atof(f[6].c_str()); v.ftpPort = atoi(f[7].c_str()); v.sockets = f[8];
     } else if (line[0] == 'T') {
       auto f = splitTabs(line, 12);
       if (f.size() != 12) continue;
@@ -248,6 +250,7 @@ static void drawHelp(const std::string& host, int port) {
     {1, "Password: press \xE2\x80\x93 to set, change or remove it. Browsers and the command line then ask for it once every 12 hours."},
     {1, "6. Cancel all (web page), X twice (here) or the cancel command stops every transfer and copy; unfinished ones are deleted."},
     {1, "Background plugin (R): serves transfers from startup, also while games run, without this app open. This screen then shows it."},
+    {1, "FTP: any FTP client (FileZilla, Cyberduck, WinSCP...), server " + host + ", port 6700, passive mode. Without a password any login works."},
     {3, ""},
     {0, "Command line (Mac, Windows, Linux with Python 3)"},
     {1, "Get the client from  " + url + "/sw2xfer.py  (or the Help button on the web page). The last path is the destination."},
@@ -411,7 +414,7 @@ int main(int, char**) {
   bool serving = false;
   auto startServer = [&]() {
     err.clear();
-    serving = !sockMode.empty() && serverStart(cfg, makeHttpConn, err);
+    serving = !sockMode.empty() && serverStart(cfg, makeHttpConn, err, makeFtpConn);
     if (!serving && err.empty()) err = "socket service unavailable";
     if (serving) logf("serving: HTTP %d", cfg.httpPort);
     else logf("cannot start: %s", err.c_str());
@@ -566,6 +569,7 @@ int main(int, char**) {
     std::vector<std::string> logs;
     std::string plVersion, plSockets;
     double plUptime = 0;
+    int ftpPort = g_ftpPort;
     bool plAnswering = true;
     bool viaPlugin = pluginMode;
     if (viaPlugin) {
@@ -573,6 +577,7 @@ int main(int, char**) {
       active = view.active; totUp = view.up; totDown = view.down; conns = view.conns; logs = view.logs;
       plVersion = view.version; plSockets = view.sockets; plUptime = view.uptime + (view.polledAt > 0 ? t - view.polledAt : 0);
       plAnswering = view.polledAt > 0 && t - view.polledAt < 4;
+      ftpPort = view.ftpPort;
     } else {
       active = transfersActive(8.0); totUp = g_bytesUp; totDown = g_bytesDown; conns = g_connections; logs = recentLog(2);
     }
@@ -629,8 +634,8 @@ int main(int, char**) {
     std::string host = ip.empty() ? "<switch-ip>" : ip;
     float y = 84;
     const float CW = W - 2 * M;
-    {  // web browser
-      const float h = 96;
+    {  // web browser (and FTP)
+      const float h = 128;
       gfx::rect(M, y, CW, h, PANEL, 14, 1, LINE);
       gfx::rect(M, y, 6, h, ACCENT, 3);
       gfx::text("Transfer by web browser", M + 28, y + 14, 18, TEXT, gfx::BOLD);
@@ -640,6 +645,11 @@ int main(int, char**) {
       bool locked = auth::enabled();
       const char* pwText = locked ? "Password protected" : "No password: anyone on your network can open it (press \xE2\x80\x93 to set one)";
       gfx::text(pwText, W - M - 28 - gfx::textWidth(pwText, 16, gfx::BOLD), y + 16, 16, locked ? DOWN : MUTED, gfx::BOLD);
+      gfx::text("FTP", M + 28, y + 92, 18, TEXT, gfx::BOLD);
+      std::string ftpText = ftpPort ? "ftp://" + host + ":" + std::to_string(ftpPort) : std::string("not available (port 6700 is in use)");
+      gfx::text(ftpText, M + 80, y + 91, 20, ftpPort ? TEXT : MUTED, ftpPort ? gfx::MONO : gfx::REGULAR);
+      const char* ftpHint = locked ? "Any FTP client, passive mode: any user name, the password above" : "Any FTP client, passive mode: any user name and password";
+      gfx::text(ftpHint, W - M - 28 - gfx::textWidth(ftpHint, 16), y + 94, 16, MUTED);
       y += h + 14;
     }
     {  // terminal

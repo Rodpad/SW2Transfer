@@ -179,8 +179,10 @@ bool sendAll(int fd, std::string& out);  // non-blocking: sends what it can, era
 
 // Starts the listeners and network threads. Returns false with err if a port
 // could not be opened.
-struct ServerConfig { int httpPort = 6967; int netThreads = 4; int diskThreads = 4; };
-bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err);
+struct ServerConfig { int httpPort = 6967; int ftpPort = 6700; int netThreads = 4; int diskThreads = 4; };
+// FTP is optional: if its port cannot be opened, HTTP still starts (g_ftpPort stays 0).
+bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err, ConnFactory ftp = nullptr);
+extern std::atomic<int> g_ftpPort;  // the FTP port being served, 0 if none
 void serverStop();
 
 // Screen capture for GET /api/screen: the UI thread fills it after drawing.
