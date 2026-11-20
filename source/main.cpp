@@ -249,10 +249,14 @@ struct TouchBtn { float x, y, w, h; u64 key; };
 static std::vector<TouchBtn> g_btns, g_btnsPrev;  // this frame's; last frame's (what a tap hits)
 static float g_touchX = -1, g_touchY = -1;         // finger now, in UI units (-1: none)
 
+// Button layout: [pad] (badge with the key) [gap] label [pad]. gfx::text centres
+// its text in a line box 1.25 x size tall, so that is what gets centred.
+static const float BTN_PAD = 18, BTN_GAP = 12;
+static float badgeSize(float size) { return roundf(size * 1.25f * UI_SCALE) / UI_SCALE; }
 static float buttonWidth(const std::string& key, const std::string& label, float size) {
-  return (key.empty() ? 0 : gfx::textWidth(key, size, gfx::BOLD) + 14) + gfx::textWidth(label, size) + 40;
+  return BTN_PAD + (key.empty() ? 0 : badgeSize(size) + BTN_GAP) + gfx::textWidth(label, size) + BTN_PAD;
 }
-// Draws a button (key glyph, then label) and registers it.
+// Draws a button (round badge with the key, then the label) and registers it.
 static void touchButton(float x, float y, float w, float h, const std::string& key, const std::string& label, u64 code, float size = 17) {
   using gfx::rgb;
   // Whole screen pixels, and the outline drawn as a filled shape: a thin
@@ -263,11 +267,16 @@ static void touchButton(float x, float y, float w, float h, const std::string& k
   x = snap(x); y = snap(y); w = x2 - x; h = y2 - y;
   bool pressed = g_touchX >= x && g_touchX < x + w && g_touchY >= y && g_touchY < y + h;
   const float b = 2 / UI_SCALE;  // 2 screen pixels
-  gfx::rect(x, y, w, h, pressed ? rgb(0xff3b4f) : rgb(0x3a3f4a), 10);
-  gfx::rect(x + b, y + b, w - 2 * b, h - 2 * b, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), 10 - b);
-  float tx = x + 20, ty = y + (h - size) / 2 - 1;
-  if (!key.empty()) { gfx::text(key, tx, ty, size, rgb(0xff3b4f), gfx::BOLD); tx += gfx::textWidth(key, size, gfx::BOLD) + 14; }
-  gfx::text(label, tx, ty, size, rgb(0xe8eaee));
+  gfx::rect(x, y, w, h, pressed ? rgb(0xff3b4f) : rgb(0x3a3f4a), 12);
+  gfx::rect(x + b, y + b, w - 2 * b, h - 2 * b, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), 12 - b);
+  float cx = x + BTN_PAD;
+  if (!key.empty()) {
+    float d = badgeSize(size), by = snap(y + (h - d) / 2), ks = size * 0.8f;
+    gfx::rect(cx, by, d, d, rgb(0xff3b4f), d / 2);
+    gfx::text(key, snap(cx + (d - gfx::textWidth(key, ks, gfx::BOLD)) / 2), by + (d - ks * 1.25f) / 2, ks, rgb(0xffffff), gfx::BOLD);
+    cx += d + BTN_GAP;
+  }
+  gfx::text(label, cx, y + (h - size * 1.25f) / 2, size, rgb(0xe8eaee));
   g_btns.push_back({x, y, w, h, code});
 }
 
@@ -397,10 +406,12 @@ static void drawPluginPanel(const PluginPanel& st) {
     {"B", "Close", true},
   };
   const u64 codes[] = {HidNpadButton_A, HidNpadButton_X, HidNpadButton_Y, HidNpadButton_B};
+  float bw = 0;  // one width for all, a tidy list
+  for (auto& a : acts) if (a.show) bw = std::max(bw, buttonWidth(a.key, a.what, 24));
   for (int i = 0; i < 4; i++) {
     auto& a = acts[i];
     if (!a.show) continue;
-    touchButton(X - 8, y, buttonWidth(a.key, a.what, 24) + 8, 62, a.key, a.what, codes[i], 24);
+    touchButton(X, y, bw, 62, a.key, a.what, codes[i], 24);
     y += 70;
   }
   const char* ask = nullptr;
