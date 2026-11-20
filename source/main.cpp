@@ -863,11 +863,17 @@ int main(int, char**) {
         gfx::text(gfx::ellipsize(fname, inner - vw - sw - 16, 17), M + 24 + vw, ry, 17, live ? TEXT : MUTED);
         // line 2: connections and size, then the progress bar
         snprintf(line, sizeof line, "%d conn  \xC2\xB7  %s%s%s", live ? (int)x->conns : (int)x->peakConns, human((double)b).c_str(),
-                 tot > 0 ? " / " : "", tot > 0 ? human((double)tot).c_str() : "");
+                 tot > 0 ? " / " : live ? " so far" : "", tot > 0 ? human((double)tot).c_str() : "");
         gfx::text(line, M + 24, ry + 24, 14, MUTED);
-        float frac = tot > 0 ? std::min(1.0, (double)b / tot) : (live || cancelled ? 0 : 1);
         gfx::rect(M + 24, ry + 46, inner, 5, BARBG, 2.5f);
-        if (frac > 0) gfx::rect(M + 24, ry + 46, inner * frac, 5, col, 2.5f);
+        if (tot <= 0 && live) {
+          // size not known (most FTP uploads): a segment sliding back and forth
+          float seg = inner * 0.25f, ph = (float)fmod(t * 0.6, 2.0), pos = ph < 1 ? ph : 2 - ph;
+          gfx::rect(M + 24 + (inner - seg) * pos, ry + 46, seg, 5, col, 2.5f);
+        } else {
+          float frac = tot > 0 ? std::min(1.0, (double)b / tot) : (cancelled ? 0 : 1);
+          if (frac > 0) gfx::rect(M + 24, ry + 46, inner * frac, 5, col, 2.5f);
+        }
         ry += 64;
       }
     }
