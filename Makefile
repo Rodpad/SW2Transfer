@@ -50,10 +50,15 @@ all: $(BUILD)
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
 	@cmp -s tools/sw2xfer.py $(ROMFS)/web/sw2xfer.py || (cp tools/sw2xfer.py $(ROMFS)/web/sw2xfer.py && rm -f $(TARGET).nro)
+	@# The background plugin is built too and travels inside the app, which installs it.
+	@PATH="$(DEVKITPRO)/devkitA64/bin:$(DEVKITPRO)/tools/bin:$$PATH" $(MAKE) --no-print-directory -f Makefile.plugin
+	@mkdir -p $(ROMFS)/plugin
+	@cmp -s sw2transfer-plugin.nso $(ROMFS)/plugin/sw2transfer.nso || (cp sw2transfer-plugin.nso $(ROMFS)/plugin/sw2transfer.nso && rm -f $(TARGET).nro)
 	@[ ! -f $(TARGET).nro ] || [ -z "$$(find $(ROMFS) -type f -newer $(TARGET).nro)" ] || rm -f $(TARGET).nro
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 clean:
 	@rm -fr $(BUILD) $(TARGET).nro $(TARGET).nacp $(TARGET).elf
+	@$(MAKE) --no-print-directory -f Makefile.plugin clean
 else
 DEPENDS	:=	$(OFILES:.o=.d)
 all	:	$(OUTPUT).nro

@@ -117,6 +117,7 @@ int main(int, char**) {
 
   std::string sockMode = initSockets();
   logf("sockets: %s", sockMode.empty() ? "FAILED" : sockMode.c_str());
+  g_sockMode = sockMode + ", heap " + std::to_string(g_heapSize >> 20) + " MB";
   // Ready as soon as our own setup is done; the network may come up later.
   svcSignalEvent(ready);
   if (sockMode.empty()) { pluginRuntimeExit(); return 1; }
@@ -146,6 +147,7 @@ int main(int, char**) {
       time_t t = settingsTime(SETTINGS);
       if (t != settingsSeen) { settingsSeen = t; auth::init(SETTINGS); logf("password: %s", auth::enabled() ? "on" : "off"); }
     }
+    if (g_stopRequested) break;  // the app's "Stop until restart"
     if (g_listenerBroken) {  // e.g. after sleep: start again with a new socket
       logf("listening socket failed; restarting");
       serverStop();
@@ -153,4 +155,17 @@ int main(int, char**) {
       serving = false;
     }
   }
+  // Stopped from the app: give the answer to /api/stop time to leave, then end
+  // the process. kaiHEN starts it again at the next restart.
+  // Transfers in progress are cancelled (unfinished uploads removed) while
+  // the server still runs, so their connections see it and close.
+  sleepMs(300);
+  cancelAll("stop");
+  sleepMs(1500);
+  serverStop();
+  opsStop();  // waits for the clean-up of unfinished uploads
+  logf("stopped until the console restarts");
+  socketExit();
+  pluginRuntimeExit();
+  return 0;
 }

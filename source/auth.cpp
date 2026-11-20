@@ -144,6 +144,12 @@ void init(const std::string& settingsPath) {
 
 bool enabled() { std::lock_guard<std::mutex> lk(mu); return !hash.empty(); }
 
+void reload() {
+  std::string p;
+  { std::lock_guard<std::mutex> lk(mu); p = path; salt.clear(); hash.clear(); secret.clear(); failures = 0; lockedUntil = 0; }
+  init(p);
+}
+
 bool setPassword(const std::string& pw) {
   std::string s = randomBytes(16), h = pw.empty() ? "" : pbkdf2(pw, s, ITERATIONS);
   std::lock_guard<std::mutex> lk(mu);

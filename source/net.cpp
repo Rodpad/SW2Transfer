@@ -68,6 +68,9 @@ std::atomic<int64_t> g_bytesUp{0}, g_bytesDown{0};
 std::atomic<int> g_connections{0};
 const int MAX_CONNECTIONS = SW2_MAX_CONNECTIONS;
 std::atomic<bool> g_listenerBroken{false};
+std::atomic<bool> g_stopRequested{false};
+std::string g_sockMode;
+double g_startedAt = 0;
 ScreenGrab g_screen;
 static std::mutex statMu;
 static std::vector<TransferRef> transfers;
@@ -84,7 +87,9 @@ TransferRef transferAttach(const std::string& path, bool upload, int64_t total) 
       return x;
     }
   }
+  static uint64_t nextId = 0;
   auto x = std::make_shared<Transfer>();
+  x->id = ++nextId;
   x->path = path; x->upload = upload; x->total = total; x->conns = 1; x->peakConns = 1; x->started = x->lastActive = t;
   transfers.push_back(x);
   return x;
@@ -494,6 +499,7 @@ bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err) {
   int fHttp = listenOn(cfg.httpPort, err);
   if (fHttp < 0) { err = "HTTP port " + std::to_string(cfg.httpPort) + ": " + err; return false; }
   vfs::logHook = [](const char* s) { logf("%s", s); };
+  if (g_startedAt == 0) g_startedAt = nowSec();
   diskStart(cfg.diskThreads);
   netQuit = false;
   for (int i = 0; i < cfg.netThreads; i++) threads.push_back(new NetThread());

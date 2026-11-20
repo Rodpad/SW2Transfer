@@ -27,6 +27,7 @@ void setLogFile(const char* path);
 // ------------------------------------------------------------------ stats
 // One entry per file and direction, shared by all connections moving it.
 struct Transfer {
+  uint64_t id = 0;       // unique in this process (the app's UI mode follows rows by it)
   std::string path;
   bool upload;
   bool copy = false;     // a copy on the card (shown as such)
@@ -59,6 +60,11 @@ extern std::atomic<int> g_connections;
 extern const int MAX_CONNECTIONS;
 // Set when the listening socket fails (e.g. after sleep); the owner restarts the server.
 extern std::atomic<bool> g_listenerBroken;
+// Background plugin: POST /api/stop from the console sets this; the plugin then
+// stops serving until the console restarts.
+extern std::atomic<bool> g_stopRequested;
+extern std::string g_sockMode;  // shown on the app's screen and in /api/status
+extern double g_startedAt;      // nowSec() when the process started serving
 
 // ------------------------------------------------------------------ disk pool
 struct Job {

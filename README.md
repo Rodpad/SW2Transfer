@@ -45,6 +45,26 @@ app is open.
 | Y | Help |
 | + | Exit |
 
+## Background plugin (experimental)
+
+SW2Transfer can also run as a kaiHEN plugin: it then serves from the moment the
+console starts, also while a game is running, without the app open. Install it
+from the app: press **R**, then **A**, and restart the console.
+
+- While the plugin runs, opening the app does not start a second server: the
+  app shows the plugin's activity (a green "Background plugin running" pill),
+  and Password, Cancel all and Help work as usual. The web page shows a
+  **Background** badge, and `sw2xfer.py info` says so.
+- In the app's plugin panel (R): **A** installs or updates it, **X** stops it
+  until the console restarts (the app then serves while it is open), **Y**
+  uninstalls it (stops it and deletes `/kaihen/plugins/sw2transfer.nso`). Stop
+  and uninstall cancel transfers that go through it.
+- It uses less memory than the app (a 16 MB heap, 256 KB buffers, 10
+  connections), so transfers are a little slower than with the app alone.
+- Its log is `/switch/sw2transfer/plugin-log.txt`; kaiHEN reports whether it
+  started in `/kaihen/plugin-status.txt`. If the console ever fails to start
+  with it, delete `/kaihen/plugins/sw2transfer.nso` from the SD card.
+
 ## Password protection
 
 **Password protection is off by default.** Until you set a password, anyone

@@ -91,6 +91,34 @@ bool takeTransferSlot() {
   return false;
 }
 
+// GET /api/status: what the app's screen shows, for the app running as a
+// screen for the background plugin. One record per line, tab-separated, free
+// text last (tabs and newlines in it become spaces):
+//   S version background bytesUp bytesDown connections uptimeSeconds sockets
+//   T id up copy cancelled bytes total conns peakConns startedAgo activeAgo path
+//   L logLine
+std::string statusText() {
+  auto clean = [](std::string v) { for (auto& c : v) if (c == '\t' || c == '\n' || c == '\r') c = ' '; return v; };
+  double t = nowSec();
+  char b[256];
+#ifdef SW2_PLUGIN
+  const int background = 1;
+#else
+  const int background = 0;
+#endif
+  snprintf(b, sizeof b, "S\t%s\t%d\t%lld\t%lld\t%d\t%.0f\t", g_appVersion, background, (long long)g_bytesUp.load(),
+           (long long)g_bytesDown.load(), g_connections.load(), g_startedAt > 0 ? t - g_startedAt : 0.0);
+  std::string out = b + clean(g_sockMode) + "\n";
+  for (auto& x : transfersActive(8.0)) {
+    snprintf(b, sizeof b, "T\t%llu\t%d\t%d\t%d\t%lld\t%lld\t%d\t%d\t%.2f\t%.2f\t", (unsigned long long)x->id, x->upload ? 1 : 0,
+             x->copy ? 1 : 0, x->cancelled ? 1 : 0, (long long)x->bytes.load(), (long long)x->total.load(), x->conns.load(),
+             x->peakConns.load(), t - x->started, t - x->lastActive);
+    out += b + clean(x->path) + "\n";
+  }
+  for (auto& l : recentLog(2)) out += "L\t" + clean(l) + "\n";
+  return out;
+}
+
 struct HttpConn : Conn {
   std::string in, out;
   enum State { HEADERS, BODY_PUMP, SENDING, WAIT_JOB, DISCARD, SINK, SPEED_SEND, PARKED } state = HEADERS;
@@ -325,8 +353,29 @@ struct HttpConn : Conn {
     bool open = (method == "GET" && (reqPath == "/" || reqPath == "/index.html" || reqPath == "/favicon.png" ||
                                      reqPath == "/favicon.ico" || reqPath == "/sw2xfer.py")) ||
                 reqPath == "/api/info" || reqPath == "/api/login" || reqPath == "/api/logout";
-    if (!open && auth::enabled() && !auth::checkToken(token()))
+    // The console itself (the app showing the background plugin) needs no
+    // password: only software on the console can connect from 127.0.0.1, and it
+    // can read the SD card anyway.
+    bool local = peerName() == "127.0.0.1";
+    if (!open && !local && auth::enabled() && !auth::checkToken(token()))
       return refuse(401, "{\"ok\":false,\"error\":\"password required\",\"login\":true}");
+    if (reqPath == "/api/status") {  // for the app's screen (tab-separated; see statusText)
+      drainBody();
+      respond(200, "text/plain; charset=utf-8", statusText());
+      return finishRequest();
+    }
+    if (method == "POST" && (reqPath == "/api/reload" || reqPath == "/api/stop")) {
+      drainBody();
+      if (!local) { error(403, "only from the console itself"); return finishRequest(); }
+      if (reqPath == "/api/reload") { auth::reload(); logf("password: %s (changed on the Switch)", auth::enabled() ? "on" : "off"); }
+#ifdef SW2_PLUGIN
+      else { logf("stop requested on the Switch"); g_stopRequested = true; }
+#else
+      else { error(404, "not the background plugin"); return finishRequest(); }
+#endif
+      respond(200, "application/json", "{\"ok\":true}");
+      return finishRequest();
+    }
     if (method == "POST" && reqPath == "/api/login") {
       int left = 0;
       if (auth::loginLocked(&left))

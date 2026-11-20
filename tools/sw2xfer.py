@@ -694,7 +694,10 @@ def main():
         elif a.cmd == "bench":
             cmd_bench(cl, a)
         elif a.cmd == "info":
-            print(json.dumps(cl.api("GET", "/api/info"), indent=2))
+            info = cl.api("GET", "/api/info")
+            print(json.dumps(info, indent=2))
+            if info.get("background"):
+                print("Served by the SW2Transfer background plugin (runs from startup, without the app open).")
     except Cancelled:
         sys.exit("\ncancelled (unfinished files removed)")
     except RuntimeError as e:

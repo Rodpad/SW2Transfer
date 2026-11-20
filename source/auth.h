@@ -13,6 +13,8 @@ namespace auth {
 
 void init(const std::string& settingsPath);
 bool enabled();
+// Reads settings.json again (another process, e.g. the app, changed it).
+void reload();
 // Empty password turns protection off. Returns false if it could not be saved.
 bool setPassword(const std::string& pw);
 bool checkPassword(const std::string& pw);

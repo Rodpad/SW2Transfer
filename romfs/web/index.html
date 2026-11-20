@@ -19,6 +19,7 @@ header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding
 header h1 { font-size: 18px; margin: 0 12px 0 0; letter-spacing: .2px; display: flex; align-items: center; gap: 10px; }
 header h1 img { width: 32px; height: 32px; border-radius: 6px; display: block; }
 header h1 .t span { color: var(--accent); }
+header h1 .bg { font-size: 12px; font-weight: 600; color: #fff; background: #2f8f4e; border-radius: 999px; padding: 3px 10px; letter-spacing: .02em; cursor: help; }
 .meta { color: var(--muted); font-size: 13px; }
 .spacer { flex: 1; }
 label.opt { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
@@ -107,7 +108,7 @@ h2 { font-size: 14px; margin: 0; }
 </head>
 <body>
 <header>
-  <h1><img src="/favicon.png" alt=""><span class="t">SW2<span>Transfer</span></span></h1>
+  <h1><img src="/favicon.png" alt=""><span class="t">SW2<span>Transfer</span></span><span class="bg" id="bgBadge" hidden title="Served by the SW2Transfer background plugin on the Switch: it runs from startup, also while games run, without the app open. Transfers are a little slower than with the app.">Background</span></h1>
   <span class="meta" id="free"></span>
   <span class="spacer"></span>
   <label class="opt">Connections
@@ -910,7 +911,7 @@ async function pollCopies() {
 $("logout").onclick = async () => { await fetch("/api/logout", { method: "POST" }).catch(() => {}); location.reload(); };
 // The login box cannot be dismissed with Esc: nothing works without it.
 $("loginDlg").addEventListener("cancel", (e) => e.preventDefault());
-api("GET", "/api/info", {}).then((j) => { $("logout").hidden = !j.auth; }).catch(() => {});
+api("GET", "/api/info", {}).then((j) => { $("logout").hidden = !j.auth; $("bgBadge").hidden = !j.background; }).catch(() => {});
 refresh();
 </script>
 </body>
