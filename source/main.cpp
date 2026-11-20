@@ -272,8 +272,10 @@ static void touchButton(float x, float y, float w, float h, const std::string& k
   float cx = x + BTN_PAD;
   if (!key.empty()) {
     float d = badgeSize(size), by = snap(y + (h - d) / 2), ks = size * 0.8f;
+    // a red ring (drawn filled, like the outline) with the key in red
     gfx::rect(cx, by, d, d, rgb(0xff3b4f), d / 2);
-    gfx::textCenter(key, cx + d / 2, by + d / 2, ks, rgb(0xffffff), gfx::BOLD);
+    gfx::rect(cx + b, by + b, d - 2 * b, d - 2 * b, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), d / 2 - b);
+    gfx::textCenter(key, cx + d / 2, by + d / 2, ks, rgb(0xff3b4f), gfx::BOLD);
     cx += d + BTN_GAP;
   }
   gfx::textMid(label, cx, y + h / 2, size, rgb(0xe8eaee));
