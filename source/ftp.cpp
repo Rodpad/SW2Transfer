@@ -360,7 +360,7 @@ struct FtpConn : Conn {
       if (!f) { reply(550, "Cannot open: " + err); return; }
       int64_t size = vfs::size(f.get());
       if (off > size) off = size;
-      pump.sendFile(f, off, -1, transferAttach(p, false, size));
+      pump.sendFile(f, off, -1, transferAttach(p, false, size, "ftp"));
       dataCmd = D_SEND; dataPath = p; dataOffset = off; dataWaitSince = nowSec();
       reply(150, "Sending " + std::to_string(size - off) + " bytes from offset " + std::to_string(off));
       maybeStartData();
@@ -380,7 +380,7 @@ struct FtpConn : Conn {
       if (!f) { reply(553, "Cannot open: " + err); return; }
       if (append) off = vfs::size(f.get());
       if (off == 0) logf("FTP upload %s", p.c_str());
-      pump.recvFile(f, off, -1, transferAttach(p, true, total));
+      pump.recvFile(f, off, -1, transferAttach(p, true, total, "ftp"));
       dataCmd = D_RECV; dataPath = p; dataOffset = off; dataWaitSince = nowSec();
       reply(150, "Receiving at offset " + std::to_string(off));
       maybeStartData();

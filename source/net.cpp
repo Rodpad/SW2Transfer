@@ -85,7 +85,7 @@ ScreenGrab g_screen;
 static std::mutex statMu;
 static std::vector<TransferRef> transfers;
 
-TransferRef transferAttach(const std::string& path, bool upload, int64_t total) {
+TransferRef transferAttach(const std::string& path, bool upload, int64_t total, const char* via) {
   std::lock_guard<std::mutex> lk(statMu);
   double t = nowSec();
   for (auto& x : transfers) {
@@ -100,6 +100,7 @@ TransferRef transferAttach(const std::string& path, bool upload, int64_t total) 
   static uint64_t nextId = 0;
   auto x = std::make_shared<Transfer>();
   x->id = ++nextId;
+  x->via = via;
   x->path = path; x->upload = upload; x->total = total; x->conns = 1; x->peakConns = 1; x->started = x->lastActive = t;
   transfers.push_back(x);
   return x;

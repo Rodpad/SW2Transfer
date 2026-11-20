@@ -63,13 +63,14 @@ struct Transfer {
   std::atomic<int64_t> bytes{0};
   std::atomic<int64_t> total{-1};   // whole file size when known
   std::atomic<int> conns{0};
-  std::atomic<int> peakConns{0};  // most connections at once (shown once finished)
+  std::atomic<int> peakConns{0};
+  std::string via;       // how it came: "web", "terminal" (command line), "ftp" ("" for copies)  // most connections at once (shown once finished)
   double started = 0, lastActive = 0;
   // UI-side smoothing
   int64_t uiLastBytes = 0; double uiSpeed = 0;
 };
 using TransferRef = std::shared_ptr<Transfer>;
-TransferRef transferAttach(const std::string& path, bool upload, int64_t total);
+TransferRef transferAttach(const std::string& path, bool upload, int64_t total, const char* via = "");
 void transferDetach(const TransferRef& t);
 std::vector<TransferRef> transfersActive(double keepSec);  // active or recent
 extern std::atomic<int64_t> g_bytesUp, g_bytesDown;

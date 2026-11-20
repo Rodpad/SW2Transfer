@@ -95,7 +95,7 @@ bool takeTransferSlot() {
 // screen for the background plugin. One record per line, tab-separated, free
 // text last (tabs and newlines in it become spaces):
 //   S version background bytesUp bytesDown connections uptimeSeconds ftpPort sockets
-//   T id up copy cancelled bytes total conns peakConns startedAgo activeAgo path
+//   T id up copy cancelled bytes total conns peakConns startedAgo activeAgo via path
 //   L logLine
 std::string statusText() {
   auto clean = [](std::string v) { for (auto& c : v) if (c == '\t' || c == '\n' || c == '\r') c = ' '; return v; };
@@ -113,7 +113,7 @@ std::string statusText() {
     snprintf(b, sizeof b, "T\t%llu\t%d\t%d\t%d\t%lld\t%lld\t%d\t%d\t%.2f\t%.2f\t", (unsigned long long)x->id, x->upload ? 1 : 0,
              x->copy ? 1 : 0, x->cancelled ? 1 : 0, (long long)x->bytes.load(), (long long)x->total.load(), x->conns.load(),
              x->peakConns.load(), t - x->started, t - x->lastActive);
-    out += b + clean(x->path) + "\n";
+    out += b + (x->via.empty() ? std::string("-") : x->via) + "\t" + clean(x->path) + "\n";
   }
   for (auto& l : recentLog(12)) out += "L\t" + clean(l) + "\n";
   return out;
@@ -253,6 +253,8 @@ struct HttpConn : Conn {
     if (getpeername(fd, (sockaddr*)&a, &al)) return "?";
     return inet_ntoa(a.sin_addr);
   }
+  // Browsers say "Mozilla/..."; sw2xfer.py, curl and scripts are the command line.
+  const char* via() { return lower(header("user-agent")).find("mozilla") != std::string::npos ? "web" : "terminal"; }
   std::string header(const std::string& k) { auto it = headers.find(k); return it == headers.end() ? "" : it->second; }
 
   void respond(int code, const std::string& type, const std::string& body, const std::string& extra = "") {
@@ -590,7 +592,7 @@ struct HttpConn : Conn {
     if (q("dl") == "1") extra += "Content-Disposition: attachment; filename=\"" + vfs::baseName(path) + "\"\r\n";
     respondHead(ranged ? 206 : 200, "application/octet-stream", len, extra);
     if (method == "HEAD" || len == 0) return finishRequest();
-    pump.sendFile(f, from, len, transferAttach(path, false, size));
+    pump.sendFile(f, from, len, transferAttach(path, false, size, via()));
     epoch = g_cancelEpoch;
     state = SENDING;
   }
@@ -612,7 +614,7 @@ struct HttpConn : Conn {
     if (!f) { keepAlive = false; error(500, err); return finishRequest(); }
     if (lower(header("expect")) == "100-continue") out += "HTTP/1.1 100 Continue\r\n\r\n";
     size_t pre = (size_t)std::min<int64_t>(std::min<int64_t>((int64_t)in.size(), putLen), CHUNK);
-    pump.recvFile(f, putOff, putLen, transferAttach(path, true, total >= 0 ? total : (whole ? putLen : -1)), in.data(), pre);
+    pump.recvFile(f, putOff, putLen, transferAttach(path, true, total >= 0 ? total : (whole ? putLen : -1), via()), in.data(), pre);
     in.erase(0, pre);
     epoch = g_cancelEpoch;
     state = BODY_PUMP;

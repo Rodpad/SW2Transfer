@@ -175,15 +175,18 @@ static void pollPlugin(PluginView& v) {
       v.ftpPort = f.size() == 9 ? atoi(f[7].c_str()) : 0;
       v.sockets = f.back();
     } else if (line[0] == 'T') {
-      auto f = splitTabs(line, 12);
-      if (f.size() != 12) continue;
+      // 13 fields; plugins from before the via field send 12 (paths start with '/').
+      auto f = splitTabs(line, 13);
+      if (f.size() == 13 && !f[11].empty() && f[11][0] == '/') f = splitTabs(line, 12);
+      if (f.size() < 12) continue;
       auto x = std::make_shared<Transfer>();
       x->id = strtoull(f[1].c_str(), nullptr, 10);
       x->upload = f[2] == "1"; x->copy = f[3] == "1"; x->cancelled = f[4] == "1";
       x->bytes = atoll(f[5].c_str()); x->total = atoll(f[6].c_str());
       x->conns = atoi(f[7].c_str()); x->peakConns = atoi(f[8].c_str());
       x->started = now - atof(f[9].c_str()); x->lastActive = now - atof(f[10].c_str());
-      x->path = f[11];
+      x->path = f.back();
+      if (f.size() == 13 && f[11] != "-") x->via = f[11];
       auto prev = v.rows.find(x->id);
       if (prev != v.rows.end() && dt > 0) {
         double inst = (x->bytes - prev->second->bytes) / dt;
@@ -862,7 +865,8 @@ int main(int, char**) {
         gfx::text(verb, M + 24, ry, 17, live || cancelled ? col : MUTED, gfx::BOLD);
         gfx::text(gfx::ellipsize(fname, inner - vw - sw - 16, 17), M + 24 + vw, ry, 17, live ? TEXT : MUTED);
         // line 2: connections and size, then the progress bar
-        snprintf(line, sizeof line, "%d conn  \xC2\xB7  %s%s%s", live ? (int)x->conns : (int)x->peakConns, human((double)b).c_str(),
+        const char* via = x->via == "web" ? "Web  \xC2\xB7  " : x->via == "ftp" ? "FTP  \xC2\xB7  " : x->via == "terminal" ? "Command line  \xC2\xB7  " : "";
+        snprintf(line, sizeof line, "%s%d conn  \xC2\xB7  %s%s%s", via, live ? (int)x->conns : (int)x->peakConns, human((double)b).c_str(),
                  tot > 0 ? " / " : live ? " so far" : "", tot > 0 ? human((double)tot).c_str() : "");
         gfx::text(line, M + 24, ry + 24, 14, MUTED);
         gfx::rect(M + 24, ry + 46, inner, 5, BARBG, 2.5f);

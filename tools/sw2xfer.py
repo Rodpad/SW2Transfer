@@ -152,6 +152,7 @@ class Client:
             try:
                 c = self.conn()
                 h = dict(headers or {})
+                h.setdefault("User-Agent", "sw2xfer")  # shown as "Command line" on the Switch
                 seen = self.token
                 if seen:
                     h["Authorization"] = "Bearer " + seen
