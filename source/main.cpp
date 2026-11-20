@@ -315,7 +315,7 @@ struct TouchReader {
 // Help screen (Y): how to use the web page and the command-line client.
 static void drawHelp(const std::string& host, int port) {
   using gfx::rgb;
-  const auto TEXT = rgb(0xe8eaee), MUTED = rgb(0x9aa1ad), ACCENT = rgb(0xff3b4f), CODE = rgb(0x8fc8ff);
+  const auto TEXT = rgb(0xe8eaee), MUTED = rgb(0x9aa1ad), TITLE = rgb(0x4fa3ff), CODE = rgb(0x8fc8ff);
   const float M = 40;
   gfx::rect(0, 0, gfx::UI_W, gfx::UI_H, rgb(0x111317, 0.97f));
   gfx::rect(M - 16, 20, gfx::UI_W - 2 * (M - 16), gfx::UI_H - 40, rgb(0x1a1d23), 14, 1, rgb(0x2a2e36));
@@ -344,7 +344,7 @@ static void drawHelp(const std::string& host, int port) {
     {1, "Options: -n 8 connections, --chunk 2M, bench /path/test.bin measures speed (the test file is deleted after)."},
   };
   float y = 44;
-  gfx::text("Help", M + 8, y, 30, rgb(0x4fa3ff), gfx::BOLD);
+  gfx::text("Help", M + 8, y, 30, TITLE, gfx::BOLD);
   y += 56;
   for (auto& l : lines) {
     if (l.kind == 0) { gfx::text(l.s, M + 8, y, 22, TEXT, gfx::BOLD); y += 38; }
