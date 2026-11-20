@@ -752,12 +752,14 @@ int main(int, char**) {
       gfx::rect(M, y, 6, h, DOWN, 3);
       struct Row { const char* label; std::string value; bool ok; } rows[2] = {
         {"Transfer by web browser:", "http://" + host + ":" + std::to_string(cfg.httpPort), true},
-        {"Transfer by FTP:", ftpPort ? "ftp://" + host + ":" + std::to_string(ftpPort) : std::string("not available (port 6700 in use)"), ftpPort != 0}};
+        {"Transfer by FTP:", ftpPort ? "ftp://" + host + ":" + std::to_string(ftpPort)
+                                     : std::string(viaPlugin ? "update the plugin (A) for FTP" : "off: port 6700 is in use"), ftpPort != 0}};
       float lw = gfx::textWidth(rows[0].label, 18, gfx::BOLD) + 16;  // values line up after the longer label
       for (int i = 0; i < 2; i++) {
         float cy = y + (i == 0 ? 40 : 90), vx = M + 28 + lw;
         gfx::textMid(rows[i].label, M + 28, cy, 18, TEXT, gfx::BOLD);
-        std::string v = gfx::ellipsize(rows[i].value, half - 28 - lw - 120, 20, gfx::MONO);
+        // room for the Fastest tag (row 1) or "slower" (row 2) after the value
+        std::string v = gfx::ellipsize(rows[i].value, half - 28 - lw - (i == 0 ? 120 : rows[i].ok ? 80 : 20), 20, rows[i].ok ? gfx::MONO : gfx::REGULAR);
         vx += gfx::textMid(v, vx, cy, 20, rows[i].ok ? DOWN : MUTED, rows[i].ok ? gfx::MONO : gfx::REGULAR) + 14;
         if (i == 0) {  // the recommended way: a small outlined tag
           const float tb = 2 / UI_SCALE, th = 26, tw = roundf((gfx::textWidth("Fastest", 14, gfx::BOLD) + 24) * UI_SCALE) / UI_SCALE;
