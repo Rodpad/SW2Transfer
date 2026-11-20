@@ -315,8 +315,8 @@ static void drawPluginPanel(const PluginPanel& st) {
   struct A { const char* key; const char* what; bool show; };
   A acts[] = {
     {"A", st.installed ? "Update the plugin" : "Install the plugin (it starts when the console restarts)", !st.installed || !st.upToDate},
-    {"X", "Stop it until the console restarts", st.running},
-    {"Y", "Uninstall: stop it and delete it", st.installed || st.running},
+    {"X", "Stop it until the console restarts (until then, transfers need this app open)", st.running},
+    {"Y", "Uninstall it (transfers then need this app open)", st.installed || st.running},
     {"B", "Close", true},
   };
   for (auto& a : acts) {
@@ -326,12 +326,16 @@ static void drawPluginPanel(const PluginPanel& st) {
     y += 40;
   }
   const char* ask = nullptr;
-  if (st.stopAsk > 0) ask = "Press X again to stop the plugin. Transfers through it are cancelled. It stays stopped until the console restarts; this app serves transfers meanwhile while it is open.";
-  if (st.removeAsk > 0) ask = "Press Y again to remove the plugin: it is stopped (transfers through it are cancelled) and deleted from the SD card.";
-  if (ask) {
-    float ay = gfx::UI_H - 150;
-    gfx::rect(M, ay, gfx::UI_W - 2 * M, 64, ACCENT, 14);
-    gfx::text(gfx::ellipsize(ask, gfx::UI_W - 2 * M - 40, 18, gfx::BOLD), M + 20, ay + 21, 18, TEXT, gfx::BOLD);
+  if (st.stopAsk > 0) ask = "Press X again to stop the background plugin until the console restarts. Transfers in progress are cancelled, and until the restart SW2Transfer must be open to transfer files.";
+  if (st.removeAsk > 0) ask = "Press Y again to uninstall the background plugin. Transfers in progress are cancelled, and from then on SW2Transfer must be open to transfer files.";
+  if (ask) {  // two lines: what to press, then what it means
+    std::string all = ask, first = all, rest;
+    size_t dot = all.find(". ");
+    if (dot != std::string::npos) { first = all.substr(0, dot + 1); rest = all.substr(dot + 2); }
+    float ay = gfx::UI_H - 170, aw = gfx::UI_W - 2 * M;
+    gfx::rect(M, ay, aw, 92, ACCENT, 14);
+    gfx::text(gfx::ellipsize(first, aw - 40, 20, gfx::BOLD), M + 20, ay + 16, 20, TEXT, gfx::BOLD);
+    gfx::text(gfx::ellipsize(rest, aw - 40, 18), M + 20, ay + 52, 18, TEXT);
   }
 }
 
@@ -482,9 +486,9 @@ int main(int, char**) {
       if (ok && del && remove(PLUGIN_PATH) != 0 && fileExists(PLUGIN_PATH)) { ok = false; e = "could not delete it"; }
       if (ok && del) { panel.stoppedHere = false; logf("background plugin removed"); }
       refreshPanel();
-      if (!ok) say(std::string(del ? "Could not remove the plugin: " : "Could not stop the plugin: ") + e, true, 6);
-      else if (del) say(wasRunning ? "Background plugin stopped and removed. This app serves transfers now." : "Background plugin removed", false, 6);
-      else say("Background plugin stopped until the console restarts. This app serves transfers now.", false, 6);
+      if (!ok) say(std::string(del ? "Could not uninstall the plugin: " : "Could not stop the plugin: ") + e, true, 6);
+      else if (del) say("Background plugin uninstalled. Keep SW2Transfer open to transfer files.", false, 7);
+      else say("Background plugin stopped until the console restarts. Keep SW2Transfer open to transfer files.", false, 7);
     }
     if ((down & HidNpadButton_R) && !showHelp) { showPanel = !showPanel; panel.stopAsk = panel.removeAsk = 0; if (showPanel) refreshPanel(); down = 0; }
     if (showPanel) {  // the panel has the buttons
@@ -504,7 +508,7 @@ int main(int, char**) {
         else { panel.stopAsk = now; panel.removeAsk = 0; }
       }
       if ((down & HidNpadButton_Y) && (panel.installed || pluginMode)) {
-        if (panel.removeAsk > 0 && now - panel.removeAsk < 4) { panel.removeAsk = 0; pendingStop = 2; say(pluginMode ? "Stopping and removing the background plugin\xE2\x80\xA6" : "Removing the background plugin\xE2\x80\xA6", false, 30); }
+        if (panel.removeAsk > 0 && now - panel.removeAsk < 4) { panel.removeAsk = 0; pendingStop = 2; say("Uninstalling the background plugin\xE2\x80\xA6", false, 30); }
         else { panel.removeAsk = now; panel.stopAsk = 0; }
       }
       if (panel.stopAsk > 0 && now - panel.stopAsk >= 4) panel.stopAsk = 0;
