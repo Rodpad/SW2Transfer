@@ -6,3 +6,5 @@ build-host/
 *.nro
 romfs/web/sw2xfer.py
 __pycache__/
+build-plugin/
+sw2transfer-plugin.nso

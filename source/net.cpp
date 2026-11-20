@@ -66,7 +66,8 @@ std::vector<std::string> recentLog(int n) {
 // ------------------------------------------------------------------ stats
 std::atomic<int64_t> g_bytesUp{0}, g_bytesDown{0};
 std::atomic<int> g_connections{0};
-const int MAX_CONNECTIONS = 16;
+const int MAX_CONNECTIONS = SW2_MAX_CONNECTIONS;
+std::atomic<bool> g_listenerBroken{false};
 ScreenGrab g_screen;
 static std::mutex statMu;
 static std::vector<TransferRef> transfers;
@@ -224,7 +225,7 @@ static void giveBuf(std::shared_ptr<Buf> b) {
   if (b->job && !b->job->done) return;  // still owned by a disk job; let it go
   b->job.reset(); b->len = b->pos = 0; b->state = Buf::EMPTY;
   std::lock_guard<std::mutex> lk(poolMu);
-  if (bufPool.size() < 64) bufPool.push_back(b);
+  if (bufPool.size() < SW2_POOL_MAX) bufPool.push_back(b);
 }
 
 void Pump::reset() {
@@ -433,6 +434,7 @@ struct Listener : Conn {
   ConnFactory make;
   int pollfds(pollfd* o) override { o[0] = {fd, (short)(g_connections < MAX_CONNECTIONS ? POLLIN : 0), 0}; return 1; }
   void handle(const pollfd* in, int) override {
+    if (in[0].revents & (POLLERR | POLLHUP | POLLNVAL)) { g_listenerBroken = true; return; }
     if (!(in[0].revents & POLLIN)) return;
     while (g_connections < MAX_CONNECTIONS) {
       int c = accept(fd, nullptr, nullptr);

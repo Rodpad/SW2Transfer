@@ -1,0 +1,67 @@
+#---------------------------------------------------------------------------------
+# SW2Transfer background plugin: a kaiHEN plugin (NSO) with the app's HTTP
+# server and no screen. Experimental, not released yet.
+#
+#   make -f Makefile.plugin          builds sw2transfer-plugin.nso
+#   make -f Makefile.plugin clean
+#
+# Install: copy sw2transfer-plugin.nso to /kaihen/plugins/sw2transfer.nso on the
+# SD card and restart the console. /kaihen/plugin-status.txt shows whether it
+# started; its log is /switch/sw2transfer/plugin-log.txt.
+#---------------------------------------------------------------------------------
+ifeq ($(strip $(DEVKITPRO)),)
+$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
+endif
+
+include $(DEVKITPRO)/libounce/switch2_rules
+
+TARGET      := sw2transfer-plugin
+BUILD       := build-plugin
+APP_VERSION := $(shell sed -n 's/^APP_VERSION[[:space:]]*:=[[:space:]]*//p' Makefile)
+
+# Smaller than the app (1 MB chunks, 3 per connection, 64 spare, 16
+# connections): it shares the console with games. Still 8 transfers at once,
+# what the clients use.
+SIZES    := -DSW2_CHUNK=262144 -DSW2_NBUF=2 -DSW2_POOL_MAX=8 -DSW2_MAX_CONNECTIONS=10 -DSW2_MAX_TRANSFERS=8
+
+ARCH     := $(SWITCH2_CPU) -mtp=soft -fPIE
+CXXFLAGS := -g -Wall -O2 -ffunction-sections -fdata-sections $(ARCH) -std=gnu++17 \
+            -D__SWITCH__ -DNDEBUG -DSW2_PLUGIN -DAPP_VERSION=\"$(APP_VERSION)\" $(SIZES) \
+            -Isource -I$(LIBNX)/include -I$(PORTLIBS_SWITCH2)/include
+LDFLAGS  := -specs=$(LIBNX)/switch.specs -g $(ARCH) -Wl,--gc-sections -Wl,-Map,$(BUILD)/$(TARGET).map
+# libounce without mimalloc (see <kaihen/plugin.h>).
+LIBS     := -lkaihen_plugin -lounce_core
+LIBDIRS  := -L$(PORTLIBS_SWITCH2)/lib -L$(LIBNX)/lib
+
+SRCS     := source/net.cpp source/http.cpp source/vfs.cpp source/ops.cpp source/auth.cpp plugin/plugin_main.cpp
+OFILES   := $(patsubst %.cpp,$(BUILD)/%.o,$(SRCS)) $(BUILD)/assets.o
+ASSETS   := romfs/web/index.html romfs/web/favicon.png tools/sw2xfer.py
+
+.PHONY: all clean
+all: $(TARGET).nso
+
+$(BUILD)/assets.cpp: $(ASSETS) tools/embed_assets.py
+	@mkdir -p $(BUILD)
+	@python3 tools/embed_assets.py $@ asset_index_html=romfs/web/index.html \
+	    asset_favicon_png=romfs/web/favicon.png asset_sw2xfer_py=tools/sw2xfer.py
+
+$(BUILD)/%.o: %.cpp Makefile.plugin
+	@mkdir -p $(dir $@)
+	@echo $(notdir $<)
+	@$(CXX) -MMD -MP $(CXXFLAGS) -c $< -o $@
+
+$(BUILD)/assets.o: $(BUILD)/assets.cpp
+	@$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD)/$(TARGET).elf: $(OFILES)
+	@echo linking $(notdir $@)
+	@$(CXX) $(LDFLAGS) $(OFILES) $(LIBDIRS) $(LIBS) -o $@
+
+$(TARGET).nso: $(BUILD)/$(TARGET).elf
+	@elf2nso $< $@
+	@echo built ... $(notdir $@)
+
+clean:
+	@rm -rf $(BUILD) $(TARGET).nso
+
+-include $(OFILES:.o=.d)

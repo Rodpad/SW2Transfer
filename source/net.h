@@ -57,6 +57,8 @@ extern std::atomic<int> g_connections;
 // socket memory pool, and past roughly the pool's size every socket on the
 // console stalls. Over the cap, new connections wait in a short listen queue.
 extern const int MAX_CONNECTIONS;
+// Set when the listening socket fails (e.g. after sleep); the owner restarts the server.
+extern std::atomic<bool> g_listenerBroken;
 
 // ------------------------------------------------------------------ disk pool
 struct Job {
@@ -71,7 +73,24 @@ JobRef diskSubmit(std::function<void()> work);
 // ------------------------------------------------------------------ pump
 // Moves bytes between a non-blocking socket and a file (or memory),
 // double-buffered so the disk and the network work at the same time.
-enum { CHUNK = 1 << 20, NBUF = 3 };
+// Sizes: the app's defaults; the background plugin (SW2_PLUGIN) builds with
+// smaller ones (see Makefile.plugin), since it runs alongside games.
+#ifndef SW2_CHUNK
+#define SW2_CHUNK (1 << 20)   // disk I/O size and per-connection buffer
+#endif
+#ifndef SW2_NBUF
+#define SW2_NBUF 3            // buffers in flight per connection
+#endif
+#ifndef SW2_POOL_MAX
+#define SW2_POOL_MAX 64       // spare buffers kept for reuse
+#endif
+#ifndef SW2_MAX_CONNECTIONS
+#define SW2_MAX_CONNECTIONS 16
+#endif
+#ifndef SW2_MAX_TRANSFERS
+#define SW2_MAX_TRANSFERS 8
+#endif
+enum { CHUNK = SW2_CHUNK, NBUF = SW2_NBUF };
 struct Buf {
   std::vector<char> data;
   size_t len = 0, pos = 0;

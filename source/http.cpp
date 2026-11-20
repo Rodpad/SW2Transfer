@@ -82,7 +82,7 @@ std::string jsonResponse(int code, const std::string& body, bool keepAlive) {
 // Each one can grow its socket buffers to 4 MB, and the socket memory pool
 // (main.cpp) holds 8 of those; past that the Switch's network service stalls
 // every socket. Requests over the limit wait, unread, for a free slot.
-const int MAX_TRANSFERS = 8;
+const int MAX_TRANSFERS = SW2_MAX_TRANSFERS;
 std::atomic<int> g_transferSlots{0};
 bool takeTransferSlot() {
   int n = g_transferSlots.load();
@@ -193,7 +193,11 @@ struct HttpConn : Conn {
 
   // GET /api/speed: zeros straight from memory.
   void sendZeros() {
+#ifdef SW2_PLUGIN
+    static const char zeros[1 << 16] = {};  // the plugin keeps its memory small
+#else
     static const char zeros[1 << 20] = {};
+#endif
     while (speedLeft > 0) {
       ssize_t n = send(fd, zeros, (size_t)std::min<int64_t>(sizeof zeros, speedLeft), 0);
       if (n > 0) { speedLeft -= n; g_bytesDown += n; continue; }
@@ -388,7 +392,11 @@ struct HttpConn : Conn {
     if (reqPath == "/api/info") {
       int64_t fr = vfs::freeSpace();
       respond(200, "application/json", std::string("{\"name\":\"SW2Transfer\",\"version\":") + jsonStr(g_appVersion) + ",\"free\":" + std::to_string(fr) +
-                                             ",\"auth\":" + (auth::enabled() ? "true" : "false") + "}");
+                                             ",\"auth\":" + (auth::enabled() ? "true" : "false") +
+#ifdef SW2_PLUGIN
+                                             ",\"background\":true" +
+#endif
+                                             "}");
       return finishRequest();
     }
     if (reqPath == "/api/list") {
@@ -439,6 +447,10 @@ struct HttpConn : Conn {
       return finishRequest();
     }
     if (method == "GET" && reqPath == "/api/screen") {  // picture of the Switch screen (PNG, nothing saved)
+#ifdef SW2_PLUGIN
+      respond(404, "application/json", "{\"ok\":false,\"error\":\"the background plugin has no screen\"}");
+      return finishRequest();
+#endif
       async([](bool ka) {
         { std::lock_guard<std::mutex> lk(g_screen.mu); g_screen.want = true; g_screen.ready = false; g_screen.png.clear(); }
         for (int i = 0; i < 200; i++) {
