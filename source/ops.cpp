@@ -13,7 +13,7 @@ std::condition_variable cv;
 std::deque<std::shared_ptr<OpJob>> queue;
 std::deque<std::function<void()>> tasks;  // background chores, run before copies
 std::vector<std::shared_ptr<OpJob>> all;
-std::thread worker;
+SysThread worker;
 bool quit = false;
 int nextId = 1;
 
@@ -101,7 +101,7 @@ std::shared_ptr<OpJob> opsCopy(const std::string& from, const std::string& to, s
   queue.push_back(j);
   all.push_back(j);
   if (all.size() > 200) all.erase(all.begin());
-  if (!worker.joinable()) worker = std::thread(run);
+  if (!worker.joinable()) worker.start(run);
   cv.notify_one();
   return j;
 }
@@ -114,7 +114,7 @@ std::vector<std::shared_ptr<OpJob>> opsJobs() {
 void opsBackground(std::function<void()> fn) {
   std::lock_guard<std::mutex> lk(mu);
   tasks.push_back(std::move(fn));
-  if (!worker.joinable()) worker = std::thread(run);
+  if (!worker.joinable()) worker.start(run);
   cv.notify_one();
 }
 

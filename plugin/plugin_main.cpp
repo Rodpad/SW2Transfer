@@ -13,6 +13,7 @@
 #include <kaihen/plugin.h>
 #include <sys/stat.h>
 #include <stdio.h>
+#include <time.h>
 #include <string>
 
 std::string g_webPage, g_clientScript, g_favicon;
@@ -118,8 +119,17 @@ int main(int, char**) {
   std::string sockMode = initSockets();
   logf("sockets: %s", sockMode.empty() ? "FAILED" : sockMode.c_str());
   g_sockMode = sockMode + ", heap " + std::to_string(g_heapSize >> 20) + " MB";
+  {
+    u64 mask = 0; svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0);
+    u64 used = 0, total = 0;
+    svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+    svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+    logf("cores allowed 0x%llx, memory used %llu of %llu KB, clock %lld", (unsigned long long)mask,
+         (unsigned long long)(used >> 10), (unsigned long long)(total >> 10), (long long)time(nullptr));
+  }
   // Ready as soon as our own setup is done; the network may come up later.
   svcSignalEvent(ready);
+  logf("ready signalled");
   if (sockMode.empty()) { pluginRuntimeExit(); return 1; }
 
   ServerConfig cfg;

@@ -26,15 +26,24 @@ double nowSec() {
 
 // Horizon never moves a thread to another core, and new threads start on the
 // creator's core, so spread the workers out explicitly.
+// Start-up steps in the background plugin's log (it has no screen to show a failure).
+#ifdef SW2_PLUGIN
+#define PSTEP(...) logf(__VA_ARGS__)
+#else
+#define PSTEP(...) do {} while (0)
+#endif
+
 static void pinThread(int core) {
-#ifdef __SWITCH__
+#if defined(__SWITCH__) && !defined(SW2_PLUGIN)  // the plugin keeps the core its process is given
   u64 mask = 0;
   svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0);
   std::vector<int> cores;
   for (int c = 1; c < 64; c++) if (mask & (1ull << c)) cores.push_back(c);  // leave core 0 to the UI
   if (cores.empty()) return;
   int c = cores[core % cores.size()];
-  svcSetThreadCoreMask(CUR_THREAD_HANDLE, c, 1u << c);
+  Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, c, 1u << c);
+  PSTEP("thread %d: core mask 0x%llx, pinned to core %d (rc 0x%x)", core, (unsigned long long)mask, c, rc);
+  (void)rc;
 #else
   (void)core;
 #endif
@@ -175,17 +184,50 @@ void cancelAll(const char* by) {
   });
 }
 
+// ------------------------------------------------------------------ SysThread
+bool SysThread::start(std::function<void()> fn, size_t stackSize) {
+  if (started_) return false;
+  fn_ = std::move(fn);
+#ifdef __SWITCH__
+  s32 prio = 0x2C;
+  svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);  // as the thread starting it
+  Result rc = threadCreate(&t_, entry, this, nullptr, stackSize, prio, -2);
+  if (R_SUCCEEDED(rc)) {
+    rc = threadStart(&t_);
+    if (R_FAILED(rc)) threadClose(&t_);
+  }
+  if (R_FAILED(rc)) { logf("cannot start a thread: 0x%x", rc); return false; }
+#else
+  (void)stackSize;
+  t_ = std::thread([this] { fn_(); });
+#endif
+  started_ = true;
+  return true;
+}
+void SysThread::join() {
+  if (!started_) return;
+#ifdef __SWITCH__
+  threadWaitForExit(&t_);
+  threadClose(&t_);
+#else
+  t_.join();
+#endif
+  started_ = false;
+}
+
 // ------------------------------------------------------------------ disk pool
 static std::mutex diskMu;
 static std::condition_variable diskCv;
 static std::deque<JobRef> diskQueue;
-static std::vector<std::thread> diskThreads;
+static std::vector<std::unique_ptr<SysThread>> diskThreads;
 static bool diskQuit = false;
 
 void diskStart(int n) {
   diskQuit = false;
-  for (int i = 0; i < n; i++)
-    diskThreads.emplace_back([i] {
+  for (int i = 0; i < n; i++) {
+    diskThreads.emplace_back(new SysThread());
+    diskThreads.back()->start([i] {
+      PSTEP("disk thread %d running", i);
       pinThread(i + 1);
       for (;;) {
         JobRef j;
@@ -199,11 +241,12 @@ void diskStart(int n) {
         j->done.store(true, std::memory_order_release);
       }
     });
+  }
 }
 void diskStop() {
   { std::lock_guard<std::mutex> lk(diskMu); diskQuit = true; }
   diskCv.notify_all();
-  for (auto& t : diskThreads) t.join();
+  for (auto& t : diskThreads) t->join();
   diskThreads.clear();
 }
 JobRef diskSubmit(std::function<void()> work) {
@@ -428,7 +471,7 @@ struct NetThread {
   std::vector<std::unique_ptr<Conn>> conns;
   std::mutex mu;
   std::vector<Conn*> incoming;
-  std::thread th;
+  SysThread th;
   void add(Conn* c) { std::lock_guard<std::mutex> lk(mu); incoming.push_back(c); }
 };
 static std::vector<NetThread*> threads;
@@ -454,6 +497,7 @@ struct Listener : Conn {
 };
 
 static void netLoop(NetThread* t, int index) {
+  PSTEP("network thread %d running", index);
   pinThread(index);
   std::vector<pollfd> pfds;
   std::vector<int> counts;
@@ -496,16 +540,25 @@ static void netLoop(NetThread* t, int index) {
 }
 
 bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err) {
+  PSTEP("start: opening port %d", cfg.httpPort);
   int fHttp = listenOn(cfg.httpPort, err);
   if (fHttp < 0) { err = "HTTP port " + std::to_string(cfg.httpPort) + ": " + err; return false; }
+  PSTEP("start: listening");
   vfs::logHook = [](const char* s) { logf("%s", s); };
   if (g_startedAt == 0) g_startedAt = nowSec();
+  PSTEP("start: starting %d disk threads", cfg.diskThreads);
   diskStart(cfg.diskThreads);
+  PSTEP("start: disk threads started");
   netQuit = false;
   for (int i = 0; i < cfg.netThreads; i++) threads.push_back(new NetThread());
   auto l2 = new Listener(); l2->fd = fHttp; l2->make = http;
   threads[0]->add(l2);
-  for (int i = 0; i < (int)threads.size(); i++) threads[i]->th = std::thread(netLoop, threads[i], i);
+  for (int i = 0; i < (int)threads.size(); i++) {
+    PSTEP("start: starting network thread %d", i);
+    NetThread* nt = threads[i];
+    nt->th.start([nt, i] { netLoop(nt, i); });
+  }
+  PSTEP("start: network threads started");
   return true;
 }
 void serverStop() {

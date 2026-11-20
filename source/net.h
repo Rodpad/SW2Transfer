@@ -17,6 +17,34 @@
 #include <vector>
 #include <poll.h>
 #include "vfs.h"
+#ifdef __SWITCH__
+#include <switch.h>
+#else
+#include <thread>
+#endif
+
+// A joinable thread. On the Switch it is a libnx thread, as kaiHEN's own
+// plugins use: std::thread does not start in a kaiHEN plugin process (the
+// process aborts). Never detach (see ops.h).
+class SysThread {
+ public:
+  SysThread() = default;
+  SysThread(const SysThread&) = delete;
+  SysThread& operator=(const SysThread&) = delete;
+  ~SysThread() { join(); }
+  bool start(std::function<void()> fn, size_t stackSize = 0x40000);  // false (and logged) if it could not start
+  void join();
+  bool joinable() const { return started_; }
+ private:
+  std::function<void()> fn_;
+  bool started_ = false;
+#ifdef __SWITCH__
+  Thread t_{};
+  static void entry(void* self) { static_cast<SysThread*>(self)->fn_(); }
+#else
+  std::thread t_;
+#endif
+};
 
 double nowSec();
 void logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
