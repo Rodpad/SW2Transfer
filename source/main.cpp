@@ -683,7 +683,7 @@ int main(int, char**) {
       plAnswering = view.polledAt > 0 && t - view.polledAt < 4;
       ftpPort = view.ftpPort;
     } else {
-      active = transfersActive(8.0); totUp = g_bytesUp; totDown = g_bytesDown; conns = g_connections; logs = recentLog(2);
+      active = transfersActive(8.0); totUp = g_bytesUp; totDown = g_bytesDown; conns = g_connections; logs = recentLog(12);
     }
     if ((int)viaPlugin != lastMode) { lastMode = viaPlugin; lastUp = totUp; lastDown = totDown; lastSample = t; }
     panel.running = viaPlugin; panel.version = plVersion; panel.sockets = plSockets; panel.uptime = plUptime;
@@ -728,7 +728,7 @@ int main(int, char**) {
       // [18] dot [10] text [18], centred on the pill's middle line
       float pw = roundf((18 + 8 + 10 + gfx::textWidth(pill, 18, gfx::BOLD) + 18) * UI_SCALE) / UI_SCALE, px = roundf((W - M - pw) * UI_SCALE) / UI_SCALE;
       // an outline (drawn filled, 2 screen pixels), dot and text in the same colour
-      const auto pc = plAnswering ? UP : rgb(0xe0a030);
+      const auto pc = plAnswering ? DOWN : rgb(0xe0a030);
       const float pb = 2 / UI_SCALE;
       gfx::rect(px, 22, pw, 38, pc, 19);
       gfx::rect(px + pb, 22 + pb, pw - 2 * pb, 38 - 2 * pb, BG, 19 - pb);
@@ -812,34 +812,62 @@ int main(int, char**) {
       gfx::text(label, gx + 13, gy + 8, 14, MUTED);
     }
 
-    // Transfers
+    // Below the graph: Transfers (left half, down to the bottom of the
+    // buttons) and Log (right half, above the buttons).
     y += gh + 20;
-    float th = gfx::UI_H - y - 122;
-    gfx::rect(M, y, W - 2 * M, th, PANEL, 14, 1, LINE);
-    gfx::text("Transfers", M + 24, y + 14, 18, TEXT, gfx::BOLD);
-    float ry = y + 50;
-    if (active.empty()) gfx::text("Waiting for transfers. Each file can use many connections at once.", M + 24, ry, 18, MUTED);
-    for (auto& x : active) {
-      if (ry > y + th - 40) break;
-      double dt = t - x->started;
-      int64_t b = x->bytes, tot = x->total;
-      bool cancelled = x->cancelled;
-      bool live = x->conns > 0 && !cancelled;
-      double sp = live ? x->uiSpeed : (dt > 0 ? b / std::max(0.001, x->lastActive - x->started) : 0);
-      auto col = cancelled ? ACCENT : x->upload ? UP : DOWN;
-      std::string name = gfx::ellipsize(std::string(x->copy ? "Copy to  " : x->upload ? "Upload  " : "Download  ") + x->path, W - 2 * M - 620, 18);
-      gfx::text(name, M + 24, ry, 18, live ? TEXT : MUTED);
-      snprintf(line, sizeof line, "%d conn  %s%s%s  %s", live ? (int)x->conns : (int)x->peakConns, human((double)b).c_str(), tot > 0 ? " / " : "", tot > 0 ? human((double)tot).c_str() : "", live ? mbs(sp).c_str() : cancelled ? "Cancelled" : "done");
-      gfx::text(line, W - M - 24 - gfx::textWidth(line, 18, gfx::MONO), ry, 18, live || cancelled ? col : MUTED, gfx::MONO);
-      float frac = tot > 0 ? std::min(1.0, (double)b / tot) : (live || cancelled ? 0 : 1);
-      gfx::rect(M + 24, ry + 28, W - 2 * M - 48, 6, BARBG, 3);
-      if (frac > 0) gfx::rect(M + 24, ry + 28, (W - 2 * M - 48) * frac, 6, col, 3);
-      ry += 48;
+    const float GAP = 16, colW = (W - 2 * M - GAP) / 2, rightX = M + colW + GAP;
+    const float btnTop = gfx::UI_H - 70, btnBottom = gfx::UI_H - 14;
+    {  // Transfers
+      float th = btnBottom - y, inner = colW - 48;
+      gfx::rect(M, y, colW, th, PANEL, 14, 1, LINE);
+      gfx::text("Transfers", M + 24, y + 14, 18, TEXT, gfx::BOLD);
+      float ry = y + 50;
+      if (active.empty()) gfx::text("Waiting for transfers", M + 24, ry, 17, MUTED);
+      for (auto& x : active) {
+        if (ry + 52 > y + th - 10) break;
+        double dt = t - x->started;
+        int64_t b = x->bytes, tot = x->total;
+        bool cancelled = x->cancelled;
+        bool live = x->conns > 0 && !cancelled;
+        double sp = live ? x->uiSpeed : (dt > 0 ? b / std::max(0.001, x->lastActive - x->started) : 0);
+        auto col = cancelled ? ACCENT : x->upload ? UP : DOWN;
+        // line 1: what and the file's name; its speed (or state) on the right
+        std::string state = live ? mbs(sp) : cancelled ? "Cancelled" : "done";
+        float sw = gfx::textWidth(state, 16, gfx::MONO);
+        gfx::text(state, M + 24 + inner - sw, ry, 16, live || cancelled ? col : MUTED, gfx::MONO);
+        size_t slash = x->path.find_last_of('/');
+        std::string fname = slash == std::string::npos ? x->path : x->path.substr(slash + 1);
+        std::string verb = x->copy ? "Copy to  " : x->upload ? "Upload  " : "Download  ";
+        float vw = gfx::textWidth(verb, 17, gfx::BOLD);
+        gfx::text(verb, M + 24, ry, 17, live || cancelled ? col : MUTED, gfx::BOLD);
+        gfx::text(gfx::ellipsize(fname, inner - vw - sw - 16, 17), M + 24 + vw, ry, 17, live ? TEXT : MUTED);
+        // line 2: connections and size, then the progress bar
+        snprintf(line, sizeof line, "%d conn  \xC2\xB7  %s%s%s", live ? (int)x->conns : (int)x->peakConns, human((double)b).c_str(),
+                 tot > 0 ? " / " : "", tot > 0 ? human((double)tot).c_str() : "");
+        gfx::text(line, M + 24, ry + 24, 14, MUTED);
+        float frac = tot > 0 ? std::min(1.0, (double)b / tot) : (live || cancelled ? 0 : 1);
+        gfx::rect(M + 24, ry + 46, inner, 5, BARBG, 2.5f);
+        if (frac > 0) gfx::rect(M + 24, ry + 46, inner * frac, 5, col, 2.5f);
+        ry += 64;
+      }
+    }
+    {  // Log, with this session's (or the plugin's) totals in its header
+      float lh = btnTop - 12 - y, inner = colW - 48;
+      gfx::rect(rightX, y, colW, lh, PANEL, 14, 1, LINE);
+      gfx::text("Log", rightX + 24, y + 14, 18, TEXT, gfx::BOLD);
+      if (viaPlugin)
+        snprintf(line, sizeof line, "plugin, running for %s: up %s, down %s", ago(plUptime).c_str(), human((double)totUp).c_str(), human((double)totDown).c_str());
+      else
+        snprintf(line, sizeof line, "this session: up %s, down %s", human((double)totUp).c_str(), human((double)totDown).c_str());
+      float hw = std::min(gfx::textWidth(line, 15), inner - 70);
+      gfx::text(gfx::ellipsize(line, hw, 15), rightX + 24 + inner - hw, y + 17, 15, MUTED);
+      int fit = std::max(0, (int)((lh - 52) / 21));
+      size_t first = logs.size() > (size_t)fit ? logs.size() - fit : 0;
+      float ly = y + 48;
+      for (size_t i = first; i < logs.size(); i++) { gfx::text(gfx::ellipsize(logs[i], inner, 14, gfx::MONO), rightX + 24, ly, 14, MUTED, gfx::MONO); ly += 21; }
     }
 
-    // Log + footer
-    float ly = gfx::UI_H - 116;
-    for (auto& l : logs) { gfx::text(gfx::ellipsize(l, W - 2 * M, 15, gfx::MONO), M, ly, 15, MUTED, gfx::MONO); ly += 20; }
+    // Footer
     if (cancelAsk > 0 && nowSec() - cancelAsk >= 3.0) cancelAsk = 0;
     if (toastUntil > 0 && nowSec() > toastUntil) { toastUntil = 0; toast.clear(); }
     if (!toast.empty()) {
@@ -853,27 +881,25 @@ int main(int, char**) {
       gfx::rect((W - aw) / 2, gfx::UI_H - 132, aw, 44, ACCENT, 22);
       gfx::textMid(ask, (W - aw) / 2 + 24, gfx::UI_H - 132 + 22, 20, TEXT, gfx::BOLD);
     }
-    float footerLeft = W - M;
-    {  // buttons: press them, or tap them
+    {  // buttons under the log: press them, or tap them
       struct B { const char* key; const char* label; u64 code; } bs[] = {
         {"A", "Plugin", HidNpadButton_A}, {"\xE2\x80\x93", "Password", HidNpadButton_Minus}, {"X", "Cancel all", HidNpadButton_X},
         {"Y", "Help", HidNpadButton_Y}, {"+", "Exit", HidNpadButton_Plus}};
+      // the largest text (22 down to 16) at which the row fits the right column
+      float size = 22, total = 0;
+      for (; size > 16; size -= 1) {
+        total = 4 * 12;
+        for (auto& b : bs) total += buttonWidth(b.key, b.label, size);
+        if (total <= colW) break;
+      }
       float bx = W - M;
       for (int i = 4; i >= 0; i--) {
-        float bw = buttonWidth(bs[i].key, bs[i].label, 22);
+        float bw = buttonWidth(bs[i].key, bs[i].label, size);
         bx -= bw;
-        touchButton(bx, gfx::UI_H - 70, bw, 56, bs[i].key, bs[i].label, bs[i].code, 22);
+        touchButton(bx, btnTop, bw, btnBottom - btnTop, bs[i].key, bs[i].label, bs[i].code, size);
         bx -= 12;
       }
-      footerLeft = bx;
     }
-    if (viaPlugin)
-      snprintf(line, sizeof line, "Background plugin, running for %s: uploaded %s, downloaded %s",
-               ago(plUptime).c_str(), human((double)totUp).c_str(), human((double)totDown).c_str());
-    else
-      snprintf(line, sizeof line, "This session: uploaded %s, downloaded %s   \xC2\xB7   Sockets: %s",
-               human((double)totUp).c_str(), human((double)totDown).c_str(), sockMode.empty() ? "unavailable" : sockMode.c_str());
-    gfx::text(gfx::ellipsize(line, footerLeft - M - 16, 16), M, gfx::UI_H - 51, 16, MUTED);
     if (showHelp || showPanel) g_btns.clear();  // only the overlay's buttons can be tapped
     if (showHelp) drawHelp(host, cfg.httpPort);
     if (showPanel) drawPluginPanel(panel);

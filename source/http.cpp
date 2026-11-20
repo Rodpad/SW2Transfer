@@ -115,7 +115,7 @@ std::string statusText() {
              x->peakConns.load(), t - x->started, t - x->lastActive);
     out += b + clean(x->path) + "\n";
   }
-  for (auto& l : recentLog(2)) out += "L\t" + clean(l) + "\n";
+  for (auto& l : recentLog(12)) out += "L\t" + clean(l) + "\n";
   return out;
 }
 
