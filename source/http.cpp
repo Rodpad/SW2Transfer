@@ -106,7 +106,7 @@ std::string statusText() {
 #else
   const int background = 0;
 #endif
-  snprintf(b, sizeof b, "S\t%s\t%d\t%lld\t%lld\t%d\t%.0f\t%d\t", g_appVersion, background, (long long)g_bytesUp.load(),
+  snprintf(b, sizeof b, "S\t%s\t%d\t%lld\t%lld\t%d\t%.0f\t%d\t", g_buildLabel, background, (long long)g_bytesUp.load(),
            (long long)g_bytesDown.load(), g_connections.load(), g_startedAt > 0 ? t - g_startedAt : 0.0, g_ftpPort.load());
   std::string out = b + clean(g_sockMode) + "\n";
   for (auto& x : transfersActive(8.0)) {

@@ -50,6 +50,9 @@ all: $(BUILD)
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
 	@cmp -s tools/sw2xfer.py $(ROMFS)/web/sw2xfer.py || (cp tools/sw2xfer.py $(ROMFS)/web/sw2xfer.py && rm -f $(TARGET).nro)
+	@# Build stamp (git commit, "+" when there are uncommitted changes), rewritten only when it changes.
+	@printf '#define BUILD_ID "%s"\n' "$$(git rev-parse --short HEAD 2>/dev/null)$$(git diff --quiet HEAD 2>/dev/null || echo +)" > source/buildid.h.new
+	@cmp -s source/buildid.h.new source/buildid.h && rm source/buildid.h.new || mv source/buildid.h.new source/buildid.h
 	@# The background plugin is built too and travels inside the app, which installs it.
 	@PATH="$(DEVKITPRO)/devkitA64/bin:$(DEVKITPRO)/tools/bin:$$PATH" $(MAKE) --no-print-directory -f Makefile.plugin
 	@mkdir -p $(ROMFS)/plugin

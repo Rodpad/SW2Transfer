@@ -17,7 +17,10 @@
 #include <string>
 
 std::string g_webPage, g_clientScript, g_favicon;
+#include "buildid.h"
 const char* g_appVersion = APP_VERSION;
+// "1.4.3 (build 9dcfe17)": tells builds of the same version apart (app and plugin).
+const char* g_buildLabel = APP_VERSION " (build " BUILD_ID ")";
 Conn* makeHttpConn(int fd);
 Conn* makeFtpConn(int fd);
 

@@ -9,3 +9,5 @@ __pycache__/
 build-plugin/
 sw2transfer-plugin.nso
 romfs/plugin/
+source/buildid.h
+source/buildid.h.new

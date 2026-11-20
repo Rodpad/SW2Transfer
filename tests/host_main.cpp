@@ -10,6 +10,7 @@
 #include <thread>
 
 std::string g_webPage, g_clientScript, g_favicon;
+const char* g_buildLabel = "host";
 const char* g_appVersion = "host";
 Conn* makeHttpConn(int fd);
 Conn* makeFtpConn(int fd);

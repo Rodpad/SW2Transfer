@@ -91,7 +91,8 @@ extern std::atomic<bool> g_listenerBroken;
 // Background plugin: POST /api/stop from the console sets this; the plugin then
 // stops serving until the console restarts.
 extern std::atomic<bool> g_stopRequested;
-extern std::string g_sockMode;  // shown on the app's screen and in /api/status
+extern std::string g_sockMode;
+extern const char* g_buildLabel;  // version and build, e.g. "1.4.3 (build 9dcfe17)"  // shown on the app's screen and in /api/status
 extern double g_startedAt;      // nowSec() when the process started serving
 
 // ------------------------------------------------------------------ disk pool

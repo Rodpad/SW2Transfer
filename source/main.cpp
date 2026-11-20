@@ -23,7 +23,10 @@
 #include "auth.h"
 
 std::string g_webPage, g_clientScript, g_favicon;
+#include "buildid.h"
 const char* g_appVersion = APP_VERSION;
+// "1.4.3 (build 9dcfe17)": tells builds of the same version apart (app and plugin).
+const char* g_buildLabel = APP_VERSION " (build " BUILD_ID ")";
 Conn* makeHttpConn(int fd);
 Conn* makeFtpConn(int fd);
 
@@ -81,6 +84,9 @@ static std::string human(double n) {
 static const char* PLUGIN_DIR = "sdmc:/kaihen/plugins";
 static const char* PLUGIN_PATH = "sdmc:/kaihen/plugins/sw2transfer.nso";
 static const char* PLUGIN_BUNDLED = "romfs:/plugin/sw2transfer.nso";
+// Which build the app installed (the plugin file itself is compressed, so its
+// version cannot simply be read from it).
+static const char* PLUGIN_RECORD = "sdmc:/switch/sw2transfer/plugin-installed.txt";
 
 // One HTTP request to this console's port 6967. Returns the HTTP status, -1
 // when nothing listens there (connection refused), or -2 on other failures.
@@ -160,10 +166,14 @@ static void pollPlugin(PluginView& v) {
     p = e + 1;
     if (line.size() < 2) continue;
     if (line[0] == 'S') {
+      // 9 fields; plugins from before FTP send 8 (no FTP port).
       auto f = splitTabs(line, 9);
-      if (f.size() != 9) continue;
+      if (f.size() == 9 && f[7].find_first_not_of("0123456789") != std::string::npos) f = splitTabs(line, 8);
+      if (f.size() < 8) continue;
       v.version = f[1]; v.up = atoll(f[3].c_str()); v.down = atoll(f[4].c_str());
-      v.conns = atoi(f[5].c_str()); v.uptime = atof(f[6].c_str()); v.ftpPort = atoi(f[7].c_str()); v.sockets = f[8];
+      v.conns = atoi(f[5].c_str()); v.uptime = atof(f[6].c_str());
+      v.ftpPort = f.size() == 9 ? atoi(f[7].c_str()) : 0;
+      v.sockets = f.back();
     } else if (line[0] == 'T') {
       auto f = splitTabs(line, 12);
       if (f.size() != 12) continue;
@@ -205,8 +215,9 @@ static bool installPlugin(const std::string& bytes, std::string& err) {
   bool ok = fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
   ok = fclose(f) == 0 && ok;
   if (ok) { remove(PLUGIN_PATH); ok = rename(tmp.c_str(), PLUGIN_PATH) == 0; }
-  if (!ok) { remove(tmp.c_str()); err = "writing the plugin failed"; }
-  return ok;
+  if (!ok) { remove(tmp.c_str()); err = "writing the plugin failed"; return false; }
+  if (FILE* r = fopen(PLUGIN_RECORD, "w")) { fputs(g_buildLabel, r); fclose(r); }  // the bundled plugin is this app's build
+  return true;
 }
 // Asks the running plugin to stop and waits until it no longer answers.
 static bool stopPlugin(std::string& err) {
@@ -244,8 +255,16 @@ static float buttonWidth(const std::string& key, const std::string& label, float
 // Draws a button (key glyph, then label) and registers it.
 static void touchButton(float x, float y, float w, float h, const std::string& key, const std::string& label, u64 code, float size = 17) {
   using gfx::rgb;
+  // Whole screen pixels, and the outline drawn as a filled shape: a thin
+  // border at a fractional position can fall between pixels and vanish on one
+  // side (as SW2PS2's R icon did).
+  auto snap = [](float v) { return roundf(v * UI_SCALE) / UI_SCALE; };
+  float x2 = snap(x + w), y2 = snap(y + h);
+  x = snap(x); y = snap(y); w = x2 - x; h = y2 - y;
   bool pressed = g_touchX >= x && g_touchX < x + w && g_touchY >= y && g_touchY < y + h;
-  gfx::rect(x, y, w, h, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), 10, 1, pressed ? rgb(0xff3b4f) : rgb(0x3a3f4a));
+  const float b = 2 / UI_SCALE;  // 2 screen pixels
+  gfx::rect(x, y, w, h, pressed ? rgb(0xff3b4f) : rgb(0x3a3f4a), 10);
+  gfx::rect(x + b, y + b, w - 2 * b, h - 2 * b, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), 10 - b);
   float tx = x + 20, ty = y + (h - size) / 2 - 1;
   if (!key.empty()) { gfx::text(key, tx, ty, size, rgb(0xff3b4f), gfx::BOLD); tx += gfx::textWidth(key, size, gfx::BOLD) + 14; }
   gfx::text(label, tx, ty, size, rgb(0xe8eaee));
@@ -329,7 +348,8 @@ static void drawHelp(const std::string& host, int port) {
 // Background plugin panel (A on the main screen).
 struct PluginPanel {
   bool running = false, installed = false, upToDate = false, stoppedHere = false;
-  std::string version, sockets;
+  std::string version, sockets;  // of the running plugin
+  std::string installedVersion;  // what the app recorded when it installed it ("" unknown)
   double uptime = 0, stopAsk = 0, removeAsk = 0;
 };
 static void drawPluginPanel(const PluginPanel& st) {
@@ -357,13 +377,16 @@ static void drawPluginPanel(const PluginPanel& st) {
   gfx::text(state, X, y, 26, col, gfx::BOLD);
   y += 42;
   if (st.running) {
-    std::string d = "Version " + st.version + "  \xC2\xB7  running for " + ago(st.uptime) + "  \xC2\xB7  sockets: " + st.sockets;
-    gfx::text(gfx::ellipsize(d, WRAP, 18), X, y, 18, MUTED); y += 30;
+    std::string d = "Installed version: " + (st.version.empty() ? std::string("unknown") : st.version) + "  \xC2\xB7  running for " + ago(st.uptime) +
+                    (st.sockets.empty() ? "" : "  \xC2\xB7  sockets: " + st.sockets);
+    gfx::text(gfx::ellipsize(d, WRAP, 20), X, y, 20, MUTED); y += 32;
+  } else if (st.installed) {
+    gfx::text("Installed version: " + (st.installedVersion.empty() ? std::string("unknown (installed by an older app)") : st.installedVersion), X, y, 20, MUTED); y += 32;
   }
   if (st.installed && !st.upToDate) {
-    gfx::text("The installed plugin is not the one in this app (" APP_VERSION "): press A to update it, then restart the console.", X, y, 18, ACCENT); y += 30;
-  } else if (st.running && st.version != APP_VERSION) {
-    gfx::text("This app has the new version: restart the console to start it.", X, y, 18, ACCENT); y += 30;
+    gfx::text(std::string("An updated plugin is available: ") + g_buildLabel + ". Press A to update it, then restart the console.", X, y, 20, ACCENT); y += 32;
+  } else if (st.running && st.version != g_buildLabel) {
+    gfx::text(std::string("The updated plugin is installed: ") + g_buildLabel + ". Restart the console to start it.", X, y, 20, ACCENT); y += 32;
   }
   y += 12;
   struct A { const char* key; const char* what; bool show; };
@@ -486,6 +509,8 @@ int main(int, char**) {
   auto refreshPanel = [&]() {
     panel.installed = fileExists(PLUGIN_PATH);
     panel.upToDate = panel.installed && readWhole(PLUGIN_PATH) == bundledPlugin;
+    panel.installedVersion = panel.installed ? readWhole(PLUGIN_RECORD) : "";
+    if (panel.upToDate) panel.installedVersion = g_buildLabel;
   };
   refreshPanel();
 
@@ -542,6 +567,7 @@ int main(int, char**) {
         if (ok) { pluginMode = false; panel.stoppedHere = true; logf("background plugin stopped from the Switch"); startServer(); }
       }
       if (ok && del && remove(PLUGIN_PATH) != 0 && fileExists(PLUGIN_PATH)) { ok = false; e = "could not delete it"; }
+      if (ok && del) remove(PLUGIN_RECORD);
       if (ok && del) { panel.stoppedHere = false; logf("background plugin removed"); }
       refreshPanel();
       if (!ok) say(std::string(del ? "Could not uninstall the plugin: " : "Could not stop the plugin: ") + e, true, 6);

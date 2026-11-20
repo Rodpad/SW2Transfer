@@ -37,8 +37,14 @@ SRCS     := source/net.cpp source/http.cpp source/ftp.cpp source/vfs.cpp source/
 OFILES   := $(patsubst %.cpp,$(BUILD)/%.o,$(SRCS)) $(BUILD)/assets.o
 ASSETS   := romfs/web/index.html romfs/web/favicon.png tools/sw2xfer.py
 
-.PHONY: all clean
-all: $(TARGET).nso
+.PHONY: all clean stamp
+all: stamp
+	@$(MAKE) --no-print-directory -f Makefile.plugin $(TARGET).nso
+
+stamp:
+	@# Build stamp (git commit, "+" when there are uncommitted changes), rewritten only when it changes.
+	@printf '#define BUILD_ID "%s"\n' "$$(git rev-parse --short HEAD 2>/dev/null)$$(git diff --quiet HEAD 2>/dev/null || echo +)" > source/buildid.h.new
+	@cmp -s source/buildid.h.new source/buildid.h && rm source/buildid.h.new || mv source/buildid.h.new source/buildid.h
 
 $(BUILD)/assets.cpp: $(ASSETS) tools/embed_assets.py
 	@mkdir -p $(BUILD)
