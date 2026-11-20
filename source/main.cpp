@@ -267,15 +267,15 @@ static void touchButton(float x, float y, float w, float h, const std::string& k
   x = snap(x); y = snap(y); w = x2 - x; h = y2 - y;
   bool pressed = g_touchX >= x && g_touchX < x + w && g_touchY >= y && g_touchY < y + h;
   const float b = 2 / UI_SCALE;  // 2 screen pixels
-  gfx::rect(x, y, w, h, pressed ? rgb(0xff3b4f) : rgb(0x3a3f4a), 12);
+  gfx::rect(x, y, w, h, pressed ? rgb(0x4fa3ff) : rgb(0x3a3f4a), 12);
   gfx::rect(x + b, y + b, w - 2 * b, h - 2 * b, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), 12 - b);
   float cx = x + BTN_PAD;
   if (!key.empty()) {
     float d = badgeSize(size), by = snap(y + (h - d) / 2), ks = size * 0.8f;
-    // a red ring (drawn filled, like the outline) with the key in red
-    gfx::rect(cx, by, d, d, rgb(0xff3b4f), d / 2);
+    // a blue ring (drawn filled, like the outline) with the key in blue
+    gfx::rect(cx, by, d, d, rgb(0x4fa3ff), d / 2);
     gfx::rect(cx + b, by + b, d - 2 * b, d - 2 * b, pressed ? rgb(0x2f3440) : rgb(0x1a1d23), d / 2 - b);
-    gfx::textCenter(key, cx + d / 2, by + d / 2, ks, rgb(0xff3b4f), gfx::BOLD);
+    gfx::textCenter(key, cx + d / 2, by + d / 2, ks, rgb(0x4fa3ff), gfx::BOLD);
     cx += d + BTN_GAP;
   }
   gfx::textMid(label, cx, y + h / 2, size, rgb(0xe8eaee));
@@ -344,7 +344,7 @@ static void drawHelp(const std::string& host, int port) {
     {1, "Options: -n 8 connections, --chunk 2M, bench /path/test.bin measures speed (the test file is deleted after)."},
   };
   float y = 44;
-  gfx::text("Help", M + 8, y, 30, ACCENT, gfx::BOLD);
+  gfx::text("Help", M + 8, y, 30, rgb(0x4fa3ff), gfx::BOLD);
   y += 56;
   for (auto& l : lines) {
     if (l.kind == 0) { gfx::text(l.s, M + 8, y, 22, TEXT, gfx::BOLD); y += 38; }
@@ -370,7 +370,7 @@ static void drawPluginPanel(const PluginPanel& st) {
   gfx::rect(0, 0, gfx::UI_W, gfx::UI_H, rgb(0x111317, 0.97f));
   gfx::rect(M - 16, 20, gfx::UI_W - 2 * (M - 16), gfx::UI_H - 40, rgb(0x1a1d23), 14, 1, rgb(0x2a2e36));
   float y = 44;
-  gfx::text("Background plugin", M + 8, y, 30, ACCENT, gfx::BOLD);
+  gfx::text("Background plugin", M + 8, y, 30, BLUE, gfx::BOLD);
   y += 60;
   const char* about[] = {
     "The plugin runs SW2Transfer in the background from the moment the console starts, also while a game",
@@ -721,7 +721,7 @@ int main(int, char**) {
       // [18] dot [10] text [18], centred on the pill's middle line
       float pw = roundf((18 + 8 + 10 + gfx::textWidth(pill, 18, gfx::BOLD) + 18) * UI_SCALE) / UI_SCALE, px = roundf((W - M - pw) * UI_SCALE) / UI_SCALE;
       // an outline (drawn filled, 2 screen pixels), dot and text in the same colour
-      const auto pc = plAnswering ? rgb(0x5bd17a) : rgb(0xe0a030);
+      const auto pc = plAnswering ? UP : rgb(0xe0a030);
       const float pb = 2 / UI_SCALE;
       gfx::rect(px, 22, pw, 38, pc, 19);
       gfx::rect(px + pb, 22 + pb, pw - 2 * pb, 38 - 2 * pb, BG, 19 - pb);
@@ -739,9 +739,9 @@ int main(int, char**) {
     {  // web browser (and FTP)
       const float h = 128;
       gfx::rect(M, y, CW, h, PANEL, 14, 1, LINE);
-      gfx::rect(M, y, 6, h, ACCENT, 3);
+      gfx::rect(M, y, 6, h, DOWN, 3);
       gfx::text("Transfer by web browser", M + 28, y + 14, 18, TEXT, gfx::BOLD);
-      gfx::text("http://" + host + ":" + std::to_string(cfg.httpPort), M + 28, y + 44, 30, ACCENT, gfx::MONO);
+      gfx::text("http://" + host + ":" + std::to_string(cfg.httpPort), M + 28, y + 44, 30, DOWN, gfx::MONO);
       const char* hint = "Open on any computer or phone on the same network";
       gfx::text(hint, W - M - 28 - gfx::textWidth(hint, 16), y + 54, 16, MUTED);
       bool locked = auth::enabled();
