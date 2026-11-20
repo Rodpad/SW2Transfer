@@ -720,9 +720,13 @@ int main(int, char**) {
       const char* pill = plAnswering ? "Background plugin running" : "Background plugin not answering";
       // [18] dot [10] text [18], centred on the pill's middle line
       float pw = roundf((18 + 8 + 10 + gfx::textWidth(pill, 18, gfx::BOLD) + 18) * UI_SCALE) / UI_SCALE, px = roundf((W - M - pw) * UI_SCALE) / UI_SCALE;
-      gfx::rect(px, 22, pw, 38, plAnswering ? rgb(0x2f8f4e) : rgb(0xb7791f), 19);
-      gfx::rect(px + 18, 22 + 19 - 4, 8, 8, TEXT, 4);
-      gfx::textMid(pill, px + 18 + 8 + 10, 22 + 19, 18, TEXT, gfx::BOLD);
+      // an outline (drawn filled, 2 screen pixels), dot and text in the same colour
+      const auto pc = plAnswering ? rgb(0x5bd17a) : rgb(0xe0a030);
+      const float pb = 2 / UI_SCALE;
+      gfx::rect(px, 22, pw, 38, pc, 19);
+      gfx::rect(px + pb, 22 + pb, pw - 2 * pb, 38 - 2 * pb, BG, 19 - pb);
+      gfx::rect(px + 18, 22 + 19 - 4, 8, 8, pc, 4);
+      gfx::textMid(pill, px + 18 + 8 + 10, 22 + 19, 18, pc, gfx::BOLD);
     } else if (panel.installed) {
       const char* note = panel.stoppedHere ? "Background plugin stopped until the console restarts" : "Background plugin installed: it starts when the console restarts";
       gfx::text(note, W - M - gfx::textWidth(note, 16), 34, 16, MUTED);
