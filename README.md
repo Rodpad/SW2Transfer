@@ -59,8 +59,8 @@ from the app: press **R**, then **A**, and restart the console.
   until the console restarts (the app then serves while it is open), **Y**
   uninstalls it (stops it and deletes `/kaihen/plugins/sw2transfer.nso`). Stop
   and uninstall cancel transfers that go through it.
-- It uses less memory than the app (a 16 MB heap, 256 KB buffers, 10
-  connections), so transfers are a little slower than with the app alone.
+- It uses somewhat less memory than the app (a 64 MB heap, half the app's
+  socket pool, 12 connections).
 - Its log is `/switch/sw2transfer/plugin-log.txt`; kaiHEN reports whether it
   started in `/kaihen/plugin-status.txt`. If the console ever fails to start
   with it, delete `/kaihen/plugins/sw2transfer.nso` from the SD card.

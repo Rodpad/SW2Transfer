@@ -19,10 +19,10 @@ TARGET      := sw2transfer-plugin
 BUILD       := build-plugin
 APP_VERSION := $(shell sed -n 's/^APP_VERSION[[:space:]]*:=[[:space:]]*//p' Makefile)
 
-# Smaller than the app (1 MB chunks, 3 per connection, 64 spare, 16
-# connections): it shares the console with games. Still 8 transfers at once,
-# what the clients use.
-SIZES    := -DSW2_CHUNK=262144 -DSW2_NBUF=2 -DSW2_POOL_MAX=8 -DSW2_MAX_CONNECTIONS=10 -DSW2_MAX_TRANSFERS=8
+# Close to the app (which has 3 buffers per connection, 64 spare, 16
+# connections): the plugin process may use 210 MB and runs at about 64.
+# Still 8 transfers at once, what the clients use.
+SIZES    := -DSW2_CHUNK=1048576 -DSW2_NBUF=2 -DSW2_POOL_MAX=8 -DSW2_MAX_CONNECTIONS=12 -DSW2_MAX_TRANSFERS=8
 
 ARCH     := $(SWITCH2_CPU) -mtp=soft -fPIE
 CXXFLAGS := -g -Wall -O2 -ffunction-sections -fdata-sections $(ARCH) -std=gnu++17 \

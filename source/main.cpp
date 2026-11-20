@@ -290,8 +290,7 @@ static void drawPluginPanel(const PluginPanel& st) {
     "The plugin runs SW2Transfer in the background from the moment the console starts, also while a game",
     "is running, so this app does not need to be open. It serves at the same address, with the same password.",
     "While it runs, this app shows what it is doing; Password and Cancel all work as usual.",
-    "It is a kaiHEN plugin (/kaihen/plugins/sw2transfer.nso). It uses less memory than this app: transfers",
-    "are a little slower than with the app on its own.",
+    "It is a kaiHEN plugin (/kaihen/plugins/sw2transfer.nso), and uses somewhat less memory than this app.",
   };
   for (auto l : about) { gfx::text(l, X, y, 18, MUTED); y += 30; }
   y += 20;

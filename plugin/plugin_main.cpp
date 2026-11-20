@@ -42,7 +42,7 @@ static size_t g_heapSize = 0;
 // available. At boot that would be a fatal error in a background process, so
 // ask for less instead, and the server sizes itself to what it got.
 void __libnx_initheap(void) {
-  static const size_t tries[] = {16u << 20, 12u << 20, 8u << 20, 6u << 20, 4u << 20};
+  static const size_t tries[] = {64u << 20, 48u << 20, 32u << 20, 24u << 20, 16u << 20};
   for (size_t sz : tries) {
     void* addr = nullptr;
     if (R_SUCCEEDED(svcSetHeapSize(&addr, sz))) {
@@ -57,24 +57,25 @@ void __libnx_initheap(void) {
 }
 
 // ---------------------------------------------------------------- sockets
-// Much smaller than the app's (1 MB buffers, efficiency 32): the pool comes out
-// of the plugin's heap, and it runs next to games. In tests on the Switch 2,
-// 256 KB socket buffers still gave about 41-46 MB/s on one connection.
+// Half the app's pool (1 MB buffers, efficiency 32): the pool comes out of the
+// plugin's heap. On the console the plugin process may use 210 MB.
+// Efficiency 16 leaves room for MAX_CONNECTIONS (12) sockets.
 static std::string initSockets() {
   struct Tier { u32 buf, max, eff; const char* name; };
   static const Tier tiers[] = {
-    {0x10000, 0x40000, 8, "buffers up to 256 KB"},  // pool 4 MB
-    {0x10000, 0x20000, 8, "buffers up to 128 KB"},  // pool 2 MB
-    {0x10000, 0, 4, "64 KB buffers"},              // as kaiHEN's ftpd plugin
+    {0x40000, 0x100000, 16, "buffers up to 1 MB"},   // pool 32 MB
+    {0x20000, 0x80000, 16, "buffers up to 512 KB"},  // pool 16 MB
+    {0x10000, 0x40000, 8, "buffers up to 256 KB"},   // pool 4 MB
+    {0x10000, 0, 4, "64 KB buffers"},                // as kaiHEN's ftpd plugin
   };
   for (const Tier& t : tiers) {
-    if (t.eff * 2 * (t.max ? t.max : t.buf) > g_heapSize / 3) continue;  // leave room for the rest
+    if (t.eff * 2 * (t.max ? t.max : t.buf) > g_heapSize / 2) continue;  // leave half for the rest
     SocketInitConfig c = *socketGetDefaultInitConfig();
     c.tcp_tx_buf_size = t.buf; c.tcp_rx_buf_size = t.buf;
     c.tcp_tx_buf_max_size = t.max; c.tcp_rx_buf_max_size = t.max;
     c.udp_tx_buf_size = 0; c.udp_rx_buf_size = 0;
     c.sb_efficiency = t.eff;
-    c.num_bsd_sessions = 4;  // 2 network threads + spare
+    c.num_bsd_sessions = 6;  // network threads + spare
     c.bsd_service_type = BsdServiceType_Auto;
     if (R_SUCCEEDED(socketInitialize(&c))) return t.name;
   }
@@ -134,7 +135,7 @@ int main(int, char**) {
 
   ServerConfig cfg;
   cfg.netThreads = 2;
-  cfg.diskThreads = 2;
+  cfg.diskThreads = 4;
   bool serving = false;
   std::string lastErr;
   int tick = 0;
