@@ -84,8 +84,14 @@ and transfers keep working while a game is running.
   then on, SW2Transfer must be open to transfer files.
 - It uses somewhat less memory than the app (a 64 MB heap, half the app's
   socket pool, 12 connections), so small files move a little slower.
-- Its log is `/switch/sw2transfer/plugin-log.txt` (readable once it stops);
-  kaiHEN reports whether it started in `/kaihen/plugin-status.txt`. If the
+- Its log is `/switch/sw2transfer/plugin-log.txt` (readable once it stops),
+  and the previous run's is kept as `plugin-log-previous.txt`, so it can still
+  be read after a restart (the app keeps `log-previous.txt` the same way).
+  kaiHEN reports whether it started in `/kaihen/plugin-status.txt`.
+- A watchdog checks it every 2 seconds. If it gets stuck with every connection
+  in use and nothing moving, it closes them all after 30 seconds and carries
+  on; a transfer stuck for 2 minutes is closed on its own. Either way it
+  writes a `WATCHDOG` report to the log. If the
   console ever fails to start with it, delete `/kaihen/plugins/sw2transfer.nso`
   from the SD card.
 

@@ -58,6 +58,12 @@ struct FtpConn : Conn {
   std::string dataPath;
   int64_t dataOffset = 0;
   double dataWaitSince = 0, lastActivity;
+  std::string describe() override {
+    char b[300];
+    snprintf(b, sizeof b, "FTP: %s%s, %lld bytes moved, last activity %.0f s ago", dataCmd == D_SEND ? "sending " : dataCmd == D_RECV ? "receiving " : "commands",
+             dataCmd == D_NONE ? "" : dataPath.c_str(), (long long)pump.moved, nowSec() - lastActivity);
+    return b;
+  }
   int epoch = 0;
   // PASS with a password set: checked on the disk pool (PBKDF2 takes a moment).
   JobRef passJob;

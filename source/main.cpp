@@ -496,16 +496,22 @@ static int askPassword(const char* header, const char* sub, std::string& out, st
 int main(int, char**) {
   romfsInit();
   mkdir(DATA_DIR, 0777);
-  { FILE* f = fopen("sdmc:/switch/sw2transfer/log.txt", "w"); if (f) fclose(f); }
+  rotateLog("sdmc:/switch/sw2transfer/log.txt", "sdmc:/switch/sw2transfer/log-previous.txt");  // (the last run's, kept)
   setLogFile("sdmc:/switch/sw2transfer/log.txt");
-  logf("SW2Transfer %s", APP_VERSION);
-  nifmInitialize(NifmServiceType_User);
+  logf("SW2Transfer %s", g_buildLabel);
+  // Each start-up step is logged before it runs, so a start that goes back to
+  // the homebrew menu shows in log-previous.txt where it stopped.
+  logf("start: network status");
+  Result nrc = nifmInitialize(NifmServiceType_User);
+  if (R_FAILED(nrc)) logf("start: network status unavailable (0x%x)", nrc);
+  logf("start: sockets");
   std::string sockMode = initSockets();
   logf("sockets: %s", sockMode.empty() ? "FAILED" : sockMode.c_str());
   g_sockMode = sockMode;
   { std::ifstream w("romfs:/web/index.html"); std::stringstream ss; ss << w.rdbuf(); g_webPage = ss.str(); }
   { std::ifstream w("romfs:/web/favicon.png", std::ios::binary); std::stringstream ss; ss << w.rdbuf(); g_favicon = ss.str(); }
   { std::ifstream w("romfs:/web/sw2xfer.py"); std::stringstream ss; ss << w.rdbuf(); g_clientScript = ss.str(); }
+  logf("start: files and password");
   vfs::init("");
   auth::init("sdmc:/switch/sw2transfer/settings.json");
   logf("password: %s", auth::enabled() ? "on" : "off");
@@ -524,8 +530,12 @@ int main(int, char**) {
   PluginView view;
   std::atomic<bool> pluginMode{false};
   if (!sockMode.empty()) {
+    logf("start: asking for the background plugin");
     std::string b;
-    pluginMode = localHttp("GET", "/api/info", b, 1500) == 200 && b.find("\"background\":true") != std::string::npos;
+    int code = localHttp("GET", "/api/info", b, 1500);
+    pluginMode = code == 200 && b.find("\"background\":true") != std::string::npos;
+    if (!pluginMode) logf("start: %s", code == -1 ? "no background plugin" : code == -2 ? "port 6967 open but not answering (a stuck plugin?)"
+                                                    : ("port 6967 answered " + std::to_string(code) + ", not as the plugin").c_str());
   }
   if (pluginMode) { logf("the background plugin is running: showing its activity"); pollPlugin(view); }
   else startServer();
@@ -543,6 +553,7 @@ int main(int, char**) {
   appletSetAutoSleepDisabled(true);
   appletSetMediaPlaybackState(true);
 
+  logf("start: screen");
   if (!gfx::init(err)) { logf("gfx: %s", err.c_str()); if (serving) serverStop(); socketExit(); romfsExit(); return 1; }
   std::atomic<bool> pollQuit{false};
   std::thread poller([&] {
@@ -554,6 +565,7 @@ int main(int, char**) {
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   PadState pad; padInitializeDefault(&pad);
   hidInitializeTouchScreen();
+  logf("start: done");
   TouchReader touch;
   // 40 UI units = 50 screen pixels (UI_SCALE 1.25)
   const float ICON = 40;
@@ -763,8 +775,8 @@ int main(int, char**) {
       for (int i = 0; i < 2; i++) {
         float cy = y + (i == 0 ? 40 : 90), vx = M + 28 + lw;
         gfx::textMid(rows[i].label, M + 28, cy, 18, TEXT, gfx::BOLD);
-        // room for the Fastest tag (row 1) or "slower" (row 2) after the value
-        std::string v = gfx::ellipsize(rows[i].value, half - 28 - lw - (i == 0 ? 120 : rows[i].ok ? 80 : 20), 20, rows[i].ok ? gfx::MONO : gfx::REGULAR);
+        // room for the Fastest tag after the value (row 1)
+        std::string v = gfx::ellipsize(rows[i].value, half - 28 - lw - (i == 0 ? 120 : 20), 20, rows[i].ok ? gfx::MONO : gfx::REGULAR);
         vx += gfx::textMid(v, vx, cy, 20, rows[i].ok ? DOWN : MUTED, rows[i].ok ? gfx::MONO : gfx::REGULAR) + 14;
         if (i == 0) {  // the recommended way: a small outlined tag
           const float tb = 2 / UI_SCALE, th = 26, tw = roundf((gfx::textWidth("Fastest", 14, gfx::BOLD) + 24) * UI_SCALE) / UI_SCALE;
@@ -772,7 +784,7 @@ int main(int, char**) {
           gfx::rect(tx, ty, tw, th, DOWN, th / 2);
           gfx::rect(tx + tb, ty + tb, tw - 2 * tb, th - 2 * tb, PANEL, th / 2 - tb);
           gfx::textMid("Fastest", tx + 12, ty + th / 2, 14, DOWN, gfx::BOLD);
-        } else if (rows[i].ok) gfx::textMid("slower", vx, cy, 14, MUTED);
+        }
       }
       gfx::rect(rx, y, half, h, PANEL, 14, 1, LINE);
       const char* pwText = locked ? "Password protected" : "No password: anyone on your network can open it (press \xE2\x80\x93 to set one)";

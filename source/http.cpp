@@ -132,6 +132,7 @@ struct HttpConn : Conn {
   JobRef job; std::shared_ptr<std::string> jobOut;
   std::string putPath; int64_t putLen = 0, putOff = 0;
   double lastActivity;
+  int64_t lastMoved = 0;  // pump.moved when last seen (moving bytes counts as activity)
   int epoch = 0;  // g_cancelEpoch when the current transfer started
 
   HttpConn(int f) { fd = f; lastActivity = nowSec(); }
@@ -149,6 +150,14 @@ struct HttpConn : Conn {
     return 1;
   }
   bool busy() override { return pump.busy() || state == WAIT_JOB; }
+  std::string describe() override {
+    static const char* names[] = {"waiting for a request", "receiving a file", "sending", "waiting for the SD card",
+                                  "dropping a body", "speed test (receiving)", "speed test (sending)", "waiting for a transfer slot"};
+    char b[300];
+    snprintf(b, sizeof b, "HTTP %s: %s %s, %lld bytes moved, last activity %.0f s ago", names[state], method.c_str(),
+             reqPath.c_str(), (long long)pump.moved, nowSec() - lastActivity);
+    return b;
+  }
 
   void handle(const pollfd* p, int) override {
     short r = p[0].revents;
@@ -176,6 +185,15 @@ struct HttpConn : Conn {
 
   void tick() override {
     if (dead) return;
+    if (pump.moved != lastMoved) { lastMoved = pump.moved; lastActivity = nowSec(); }
+    // Mid-request with nothing moving (the client gone, or an SD card job that doesn't return): give up after
+    // 2 minutes (5 waiting for a transfer slot), so the connection and its slot are free again.
+    if (state != HEADERS && nowSec() - lastActivity > (state == PARKED ? 300 : 120)) {
+      logf("HTTP %s %s: nothing moved for %.0f s (%s); closing it", method.c_str(), reqPath.c_str(),
+           nowSec() - lastActivity, describe().c_str());
+      fail("no progress");
+      return;
+    }
     if (state == PARKED) { route(); if (dead || state == PARKED) return; }  // waiting for a transfer slot
     if (state == WAIT_JOB && job->done.load(std::memory_order_acquire)) {
       out += *jobOut; job.reset(); jobOut.reset();
@@ -200,6 +218,7 @@ struct HttpConn : Conn {
   }
 
   void finishRequest() {
+    lastActivity = nowSec();
     releaseSlot();
     if (state == SENDING || state == BODY_PUMP) pump.reset();
     state = HEADERS;

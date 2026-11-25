@@ -51,6 +51,9 @@ void logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 std::vector<std::string> recentLog(int n);
 
 void setLogFile(const char* path);
+// Keeps the last run's log as prev (one generation) and starts path empty, so a
+// crash or hang is still readable after the console restarts.
+void rotateLog(const char* path, const char* prev);
 
 // ------------------------------------------------------------------ stats
 // One entry per file and direction, shared by all connections moving it.
@@ -171,6 +174,7 @@ struct Conn {
   virtual void handle(const struct pollfd* in, int n) = 0;
   virtual void tick() {}
   virtual bool busy() { return false; }
+  virtual std::string describe() { return "connection"; }  // for the watchdog's report
 };
 using ConnFactory = std::function<Conn*(int fd)>;
 
@@ -186,6 +190,15 @@ struct ServerConfig { int httpPort = 6967; int ftpPort = 6700; int netThreads = 
 bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err, ConnFactory ftp = nullptr);
 extern std::atomic<int> g_ftpPort;  // the FTP port being served, 0 if none
 void serverStop();
+
+// Watchdog (started and stopped with the server): every 2 s it checks that the
+// network threads still loop, that no SD job runs for long, that the connection
+// count matches the connections there are, and that the server isn't stuck at
+// the connection cap with nothing moving. On a problem it writes a WATCHDOG
+// report to the log, and frees what it safely can: it corrects the count, and
+// closes all connections when the cap is reached and nothing moves for 30 s.
+void watchdogStart();
+void watchdogStop();
 
 // Screen capture for GET /api/screen: the UI thread fills it after drawing.
 struct ScreenGrab { std::mutex mu; bool want = false, ready = false; std::string png; };

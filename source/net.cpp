@@ -54,6 +54,11 @@ static std::mutex logMu;
 static std::deque<std::string> logLines;
 static FILE* logFile = nullptr;
 void setLogFile(const char* path) { std::lock_guard<std::mutex> lk(logMu); logFile = fopen(path, "a"); }
+void rotateLog(const char* path, const char* prev) {
+  remove(prev);
+  if (rename(path, prev) != 0) remove(path);  // (no last log, or it can't be moved: start empty anyway)
+  if (FILE* f = fopen(path, "w")) fclose(f);
+}
 void logf(const char* fmt, ...) {
   char b[512];
   va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
@@ -224,6 +229,7 @@ static std::condition_variable diskCv;
 static std::deque<JobRef> diskQueue;
 static std::vector<std::unique_ptr<SysThread>> diskThreads;
 static bool diskQuit = false;
+static std::atomic<double> diskBusySince[16];  // when each disk thread's current job began (0: idle), for the watchdog
 
 void diskStart(int n) {
   diskQuit = false;
@@ -240,7 +246,9 @@ void diskStart(int n) {
           if (diskQueue.empty()) return;
           j = diskQueue.front(); diskQueue.pop_front();
         }
+        if (i < 16) diskBusySince[i] = nowSec();
         j->work();
+        if (i < 16) diskBusySince[i] = 0;
         j->done.store(true, std::memory_order_release);
       }
     });
@@ -475,9 +483,12 @@ struct NetThread {
   std::mutex mu;
   std::vector<Conn*> incoming;
   SysThread th;
+  std::atomic<double> beat{0};  // last time round the loop (the watchdog's sign of life)
+  int liveNow = 0;              // connections it holds, listeners not counted (under mu)
   void add(Conn* c) { std::lock_guard<std::mutex> lk(mu); incoming.push_back(c); }
 };
 static std::vector<NetThread*> threads;
+static std::atomic<int> g_reportReq{0}, g_dropReq{0};  // the watchdog asks; each network thread does it on its next loop
 static std::atomic<bool> netQuit{false};
 static std::atomic<unsigned> rr{0};
 
@@ -490,6 +501,10 @@ struct Listener : Conn {
     if (fd < 0) return 0;
     o[0] = {fd, (short)(g_connections < MAX_CONNECTIONS ? POLLIN : 0), 0};
     return 1;
+  }
+  std::string describe() override {
+    return "listening on port " + std::to_string(port) + (fd < 0 ? " (no socket: opening a new one)" : "") +
+           (g_connections >= MAX_CONNECTIONS ? " (paused: at the connection cap)" : "");
   }
   void tick() override {
     if (fd >= 0 || nowSec() < retryAt) return;
@@ -541,11 +556,22 @@ static void netLoop(NetThread* t, int index) {
   pinThread(index);
   std::vector<pollfd> pfds;
   std::vector<int> counts;
+  int reportSeen = g_reportReq, dropSeen = g_dropReq;
   while (!netQuit) {
+    t->beat = nowSec();
     {
       std::lock_guard<std::mutex> lk(t->mu);
       for (auto c : t->incoming) t->conns.emplace_back(c);
       t->incoming.clear();
+    }
+    if (g_reportReq != reportSeen) {
+      reportSeen = g_reportReq;
+      logf("  network thread %d: %d connection(s)", index, (int)t->conns.size());
+      for (auto& c : t->conns) logf("    %s", c->describe().c_str());
+    }
+    if (g_dropReq != dropSeen) {
+      dropSeen = g_dropReq;
+      for (auto& c : t->conns) if (!dynamic_cast<Listener*>(c.get())) c->dead = true;  // removed below, as any closed one
     }
     pfds.clear(); counts.clear();
     bool anyBusy = false;
@@ -572,6 +598,10 @@ static void netLoop(NetThread* t, int index) {
         t->conns.erase(t->conns.begin() + i);
       } else i++;
     }
+    int live = 0;
+    for (auto& c : t->conns) if (!dynamic_cast<Listener*>(c.get())) live++;
+    std::lock_guard<std::mutex> lk(t->mu);
+    t->liveNow = live;
   }
   // Connections dropped by the stop leave the count too (or after a few
   // restarts mid-transfer it stays above MAX_CONNECTIONS and nobody gets in).
@@ -613,13 +643,102 @@ bool serverStart(const ServerConfig& cfg, ConnFactory http, std::string& err, Co
     nt->th.start([nt, i] { netLoop(nt, i); });
   }
   PSTEP("start: network threads started");
+  watchdogStart();
   return true;
 }
 void serverStop() {
+  watchdogStop();
   netQuit = true;
   g_ftpPort = 0;
   for (auto t : threads) { t->th.join(); delete t; }
   threads.clear();
   diskStop();
   vfs::reap(true);
+}
+
+// ------------------------------------------------------------------ watchdog
+static SysThread watchdogThread;
+static std::atomic<bool> watchdogQuit{false};
+static bool watchdogRunning = false;
+
+static void watchdogLoop() {
+  int64_t lastBytes = -1; double lastMove = nowSec(), lastReport = 0;
+  int driftSeen = 0, driftCount = 0, driftLive = -1;
+  bool troubled = false;
+  while (!watchdogQuit) {
+    for (int i = 0; i < 20 && !watchdogQuit; i++) std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 2 s
+    if (watchdogQuit) break;
+    double now = nowSec();
+    int64_t bytes = g_bytesUp + g_bytesDown;
+    if (bytes != lastBytes) { lastBytes = bytes; lastMove = now; }
+    std::vector<std::string> problems;
+    bool netStuck = false;
+    char b[200];
+    // Network threads: each goes round its loop at least every 20 ms.
+    int live = 0;
+    for (size_t i = 0; i < threads.size(); i++) {
+      double beat = threads[i]->beat;
+      if (beat > 0 && now - beat > 15) {
+        snprintf(b, sizeof b, "network thread %d has not gone round its loop for %.0f s", (int)i, now - beat);
+        problems.push_back(b); netStuck = true;
+      }
+      std::lock_guard<std::mutex> lk(threads[i]->mu);
+      live += threads[i]->liveNow;
+      for (auto c : threads[i]->incoming) if (!dynamic_cast<Listener*>(c)) live++;
+    }
+    // Disk threads: one job is one read, write or folder listing.
+    for (size_t i = 0; i < diskThreads.size() && i < 16; i++) {
+      double since = diskBusySince[i];
+      if (since > 0 && now - since > 30) {
+        snprintf(b, sizeof b, "disk thread %d: one SD card job has been running for %.0f s", (int)i, now - since);
+        problems.push_back(b);
+      }
+    }
+    // The count of connections against the connections there are. A difference
+    // that stays the same for 3 checks (6 s) is drift, not a connection on its way.
+    int counted = g_connections;
+    if (!netStuck && counted != live) {
+      if (counted - live == driftSeen && live == driftLive) driftCount++; else { driftSeen = counted - live; driftLive = live; driftCount = 1; }
+      if (driftCount >= 3) {
+        snprintf(b, sizeof b, "the connection count said %d but there are %d; corrected", counted, live);
+        problems.push_back(b);
+        g_connections -= driftSeen;
+        driftCount = 0;
+      }
+    } else driftCount = 0;
+    // At the cap with nothing moving: nobody new can get in, and those in are stuck.
+    if (!netStuck && g_connections >= MAX_CONNECTIONS && now - lastMove > 30) {
+      snprintf(b, sizeof b, "at the connection cap (%d) with nothing moving for %.0f s: closing all connections", MAX_CONNECTIONS, now - lastMove);
+      problems.push_back(b);
+      lastMove = now;  // (once, then give it time)
+      g_reportReq++;   // what they were doing, before they go
+      g_dropReq++;
+    }
+    if (problems.empty()) {
+      if (troubled) { logf("WATCHDOG: everything is running again"); troubled = false; }
+      continue;
+    }
+    if (troubled && now - lastReport < 60 && problems.size() == 1 && problems[0].find("corrected") == std::string::npos) continue;
+    troubled = true; lastReport = now;
+    for (auto& p : problems) logf("WATCHDOG: %s", p.c_str());
+    logf("WATCHDOG: connections %d (cap %d), moved %lld bytes so far, last movement %.0f s ago, sockets %s",
+         (int)g_connections, MAX_CONNECTIONS, (long long)bytes, now - lastMove, g_sockMode.c_str());
+    for (auto& x : transfersActive(30.0))
+      logf("WATCHDOG:   %s %s: %lld of %lld bytes, %d connection(s), last active %.0f s ago", x->upload ? "upload" : "download",
+           x->path.c_str(), (long long)x->bytes.load(), (long long)x->total.load(), x->conns.load(), now - x->lastActive);
+    if (netStuck) logf("WATCHDOG: a network thread is stuck: SW2Transfer can't recover from this by itself; restart the console");
+    else g_reportReq++;  // each network thread lists its connections on its next loop
+  }
+}
+
+void watchdogStart() {
+  if (watchdogRunning) return;
+  watchdogQuit = false;
+  watchdogRunning = watchdogThread.start(watchdogLoop, 0x8000);
+}
+void watchdogStop() {
+  if (!watchdogRunning) return;
+  watchdogQuit = true;
+  watchdogThread.join();
+  watchdogRunning = false;
 }

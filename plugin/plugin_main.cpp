@@ -109,7 +109,7 @@ int main(int, char**) {
   static const char* SETTINGS = "sdmc:/switch/sw2transfer/settings.json";
   mkdir("sdmc:/switch", 0777);
   mkdir("sdmc:/switch/sw2transfer", 0777);
-  { FILE* f = fopen("sdmc:/switch/sw2transfer/plugin-log.txt", "w"); if (f) fclose(f); }
+  rotateLog("sdmc:/switch/sw2transfer/plugin-log.txt", "sdmc:/switch/sw2transfer/plugin-log-previous.txt");  // (the last run's, kept)
   setLogFile("sdmc:/switch/sw2transfer/plugin-log.txt");
   logf("SW2Transfer %s background plugin, heap %u MB", APP_VERSION, (unsigned)(g_heapSize >> 20));
 
