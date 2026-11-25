@@ -13,7 +13,7 @@ different byte range, which is much faster than a single stream.
 
 | | Upload to Switch | Download from Switch |
 |---|---|---|
-| **SW2Transfer, 8 connections (default)** | **51 MB/s** | **43 MB/s** |
+| **SW2Transfer, 8 connections (default)** | **60 MB/s** | **43 MB/s** |
 | SW2Transfer, 1 connection | 28 MB/s | 21 MB/s |
 | FTP (kaiHEN ftpd) | 8.6 MB/s | 9.5 MB/s |
 
