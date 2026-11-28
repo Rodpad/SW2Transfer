@@ -11,6 +11,8 @@ different byte range, which is much faster than a single stream.
 
 ## Speed
 
+One 2 GB file:
+
 | | Upload to Switch | Download from Switch |
 |---|---|---|
 | **SW2Transfer, 8 connections (default)** | **99 MB/s** | **90 MB/s** |
@@ -18,14 +20,7 @@ different byte range, which is much faster than a single stream.
 | SW2Transfer's FTP server (port 6700), 1 stream | 44 MB/s | 58 MB/s |
 | FTP (kaiHEN ftpd) | 9.2 MB/s | 12.8 MB/s |
 
-SW2Transfer is about 10 times faster than kaiHEN's ftpd for uploads and 7 times
-for downloads. Measured with SW2Transfer 2.0.1 (the background plugin), the
-Switch 2 wired and a Mac on Wi-Fi, moving a 2 GB file, every transfer checked
-byte for byte. Downloads varied the most (84-96 MB/s on 8 connections), as the
-Mac receives over Wi-Fi.
-
-Many small files (100 typical emulator files: saves, configs, box art and ROMs,
-21.6 MB in all):
+100 small files (21.6 MB):
 
 | | Time | Speed |
 |---|---|---|
