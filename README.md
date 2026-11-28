@@ -13,28 +13,24 @@ different byte range, which is much faster than a single stream.
 
 | | Upload to Switch | Download from Switch |
 |---|---|---|
-| **SW2Transfer, 8 connections (default)** | **60 MB/s** | **43 MB/s** |
-| SW2Transfer, 1 connection | 28 MB/s | 21 MB/s |
-| FTP (kaiHEN ftpd) | 8.6 MB/s | 9.5 MB/s |
+| **SW2Transfer, 8 connections (default)** | **99 MB/s** | **90 MB/s** |
+| SW2Transfer, 1 connection | 39 MB/s | 66 MB/s |
+| SW2Transfer's FTP server (port 6700), 1 stream | 44 MB/s | 58 MB/s |
+| FTP (kaiHEN ftpd) | 9.2 MB/s | 12.8 MB/s |
 
-SW2Transfer is about 5 times faster than FTP. Before these tests, the most I had
-ever seen over FTP was 8.8 MB/s. All measured with a Mac and the Switch 2 both
-on Wi-Fi, moving a 256 MB file (every transfer checked byte for byte).
-
-SW2Transfer's own FTP server (port 6700) moved a 200 MB file at about 28 MB/s up
-and 19 MB/s down, around 3 times kaiHEN's ftpd, though the web page and the
-command line are faster still. The background plugin, which serves while the
-app is closed, moved a 200 MB file at 47-51 MB/s up and 40-46 MB/s down.
+SW2Transfer is about 10 times faster than kaiHEN's ftpd for uploads and 7 times
+for downloads. Measured with SW2Transfer 2.0.1 (the background plugin), the
+Switch 2 wired and a Mac on Wi-Fi, moving a 2 GB file, every transfer checked
+byte for byte. Downloads varied the most (84-96 MB/s on 8 connections), as the
+Mac receives over Wi-Fi.
 
 Many small files (100 typical emulator files: saves, configs, box art and ROMs,
 21.6 MB in all):
 
 | | Time | Speed |
 |---|---|---|
-| **SW2Transfer (app)** | **0.9 s** | **23 MB/s** |
-| SW2Transfer (background plugin) | 1.2 s | 18 MB/s |
-| SW2Transfer 1.4.0 | 3.0 s | 7.2 MB/s |
-| FTP (kaiHEN ftpd) | 3.9 s | 5.5 MB/s |
+| **SW2Transfer** | **0.8 s** | **27 MB/s** |
+| FTP (kaiHEN ftpd) | 4.9 s | 4.4 MB/s |
 
 Up to 4 files move at once, one connection each; connections with no file of
 their own help a big file with its next chunks, so a file on its own still uses
